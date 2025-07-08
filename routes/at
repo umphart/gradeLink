@@ -1,0 +1,688 @@
+const jwt = require('jsonwebtoken');
+
+const authenticate = (req, res, next) => {
+  const token = req.headers['authorization']?.split(' ')[1]; // Token should be in the format "Bearer <token>"
+
+  if (!token) {
+    return res.status(403).json({ message: 'Access denied. No token provided.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'myscretkey');
+    req.user = decoded; // Attach decoded user data to req.user
+    next(); // Proceed to the next middleware/route handler
+  } catch (err) {
+    return res.status(400).json({ message: 'Invalid token.' });
+  }
+};
+
+module.exports = authenticate;
+// routes/students.js
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const getSchoolDbConnection = require('../utils/dbSwitcher');
+const router = express.Router();
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/images/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + '-' + file.originalname;
+    cb(null, uniqueName);
+  },
+});
+const upload = multer({ storage });
+
+router.post('/', upload.single('photo'), async (req, res) => {
+  try {
+    // 🧠 Use req.body.schoolName or req.headers['x-school-name'] or session
+    const { schoolName } = req.body; // e.g., 'Greenfield Academy'
+    if (!schoolName) {
+      return res.status(400).json({ message: 'Missing school name' });
+    }
+
+    const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`; // same format as creation
+    const schoolDb = getSchoolDbConnection(dbName);
+
+    const {
+      fullName,
+      admissionNumber,
+      className,
+      section,
+      gender,
+      age,
+      phone,
+      guidanceName,
+      guidanceContact
+    } = req.body;
+
+    const photoUrl = req.file ? req.file.filename : null;
+
+    const insertQuery = `
+      INSERT INTO students (
+        full_name, admission_number, class_name, section,
+        gender, age, phone, guidance_name, guidance_contact, photo_url
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+    `;
+
+    const values = [
+      fullName,
+      admissionNumber,
+      className,
+      section,
+      gender,
+      age ? parseInt(age) : null,
+      phone,
+      guidanceName,
+      guidanceContact,
+      photoUrl
+    ];
+
+    const result = await schoolDb.query(insertQuery, values);
+    await schoolDb.end();
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error posting student:', error);
+    res.status(500).json({ message: 'Failed to add student to school database' });
+  }
+});
+router.get('/', async (req, res) => {
+  try {
+   const schoolName = req.query.schoolName || req.body.schoolName;
+if (!schoolName) {
+  return res.status(400).json({ message: 'Missing school name' });
+}
+
+const dbName = `school_${encodeURIComponent(schoolName).toLowerCase().replace(/%20/g, '_')}`;
+console.log('Connecting to DB:', dbName); // Debug log
+
+const schoolDb = getSchoolDbConnection(dbName);
+
+    const result = await schoolDb.query('SELECT * FROM students ORDER BY id DESC');
+    await schoolDb.end();
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching students:', error);
+    res.status(500).json({ message: 'Failed to fetch students from school database', error: error.message });
+  }
+});
+
+
+module.exports = router;
+import { useState, useEffect } from 'react';    
+import { Box, Button, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Grid, Avatar, InputAdornment, CircularProgress, IconButton } from '@mui/material';
+import { Add as AddIcon, Search as SearchIcon, Close as CloseIcon, CloudUpload as CloudUploadIcon } from '@mui/icons-material';
+import { Autocomplete } from '@mui/material';
+import { getStudents } from '../services/studentService';
+import StudentRow from '../components/students/StudentRow';
+
+const Students = () => {
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [newStudent, setNewStudent] = useState({
+    fullName: '',
+    admissionNumber: '',
+    className: '',
+    gender: '',
+    phone: '',
+    age: '',
+    guidanceName: '',
+    guidanceContact: '',
+    photo: null,
+    section: ''
+  });
+
+  const sections = ['Primary', 'Junior Section', 'Senior Section'];
+  const primaryClasses = ['Primary 1', 'Primary 2', 'Primary 3', 'Primary 4', 'Primary 5'];
+  const juniorClasses = ['JSS 1', 'JSS 2', 'JSS 3'];
+  const seniorClasses = ['SS 1', 'SS 2', 'SS 3'];
+  const genders = ['Male', 'Female', 'Other'];
+
+  const getClassesForSection = (section) => {
+    switch(section) {
+      case 'Primary':
+        return primaryClasses;
+      case 'Junior Section':
+        return juniorClasses;
+      case 'Senior Section':
+        return seniorClasses;
+      default:
+        return [];
+    }
+  };
+
+  const availableClasses = getClassesForSection(newStudent.section);
+
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const data = await getStudents();
+        setStudents(data);
+      } catch (error) {
+        console.error('Error fetching students:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchStudents();
+  }, []);
+
+  const filteredStudents = students.filter(student =>
+    student.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    student.admissionNumber?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setNewStudent(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handleAutocompleteChange = (name, value) => {
+    setNewStudent(prev => ({
+      ...prev,
+      [name]: value
+    }));
+
+    if (name === 'section') {
+      setNewStudent(prev => ({ ...prev, className: '' }));
+    }
+  };
+
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setNewStudent(prev => ({ ...prev, photo: file }));
+    }
+  };
+
+  const handleModalClose = () => {
+    setModalOpen(false);
+    setNewStudent({
+      fullName: '',
+      admissionNumber: '',
+      className: '',
+      gender: '',
+      phone: '',
+      age: '',
+      guidanceName: '',
+      guidanceContact: '',
+      photo: null,
+      section: ''
+    });
+  };
+
+ const handleAddStudent = async () => {
+  const school = JSON.parse(localStorage.getItem('school'));
+  const schoolName = school?.name;
+
+  // Log the school name to the console
+  console.log('School Name:', schoolName);
+
+  if (!schoolName) {
+    alert('School name is missing. Please log in again or select a school.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('fullName', newStudent.fullName);
+  formData.append('schoolName', schoolName);
+  formData.append('admissionNumber', newStudent.admissionNumber);
+  formData.append('className', newStudent.className);
+  formData.append('section', newStudent.section);
+  formData.append('gender', newStudent.gender);
+  formData.append('age', newStudent.age);
+  formData.append('phone', newStudent.phone);
+  formData.append('guidanceName', newStudent.guidanceName);
+  formData.append('guidanceContact', newStudent.guidanceContact);
+
+  if (newStudent.photo) {
+    formData.append('photo', newStudent.photo);
+  }
+
+  try {
+    const response = await fetch('http://localhost:5000/api/students', {
+      method: 'POST',
+      body: formData
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      console.error('Backend error:', result);
+      throw new Error(`Failed to add student: ${result.message || response.statusText}`);
+    }
+
+    console.log('Student added:', result);
+    const updatedStudents = await getStudents();
+    setStudents(updatedStudents);
+    handleModalClose();
+  } catch (error) {
+    console.error('Error saving student:', error);
+    alert('There was a problem saving the student.');
+  }
+};
+
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" sx={{ fontWeight: 600 }}>Student Management</Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setModalOpen(true)}>
+          Add Student
+        </Button>
+      </Box>
+
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <TextField
+          fullWidth
+          variant="outlined"
+          placeholder="Search students by name or admission number..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            )
+          }}
+        />
+      </Paper>
+
+      <Paper>
+        <TableContainer>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Admission No.</TableCell>
+                <TableCell>Name</TableCell>
+                <TableCell>Class</TableCell>
+                <TableCell>Gender</TableCell>
+                <TableCell>Contact</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredStudents.length > 0 ? (
+                filteredStudents.map((student) => (
+                  <StudentRow key={student.id} student={student} />
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={6} align="center">
+                    {searchTerm ? 'No matching students found' : 'No students available'}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      <Dialog open={modalOpen} onClose={handleModalClose} fullWidth maxWidth="sm">
+        <DialogTitle
+          sx={{
+            backgroundColor: 'primary.main',
+            color: 'white',
+            p: 2,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}
+        >
+          Add New Student
+          <IconButton onClick={handleModalClose} sx={{ color: 'white' }}>
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent>
+          <Box display="flex" flexDirection="column" alignItems="center" mb={2}>
+            <Avatar
+              src={newStudent.photo ? URL.createObjectURL(newStudent.photo) : ''}
+              sx={{ width: 80, height: 80, mb: 1 }}
+            >
+              {newStudent.fullName ? newStudent.fullName.charAt(0).toUpperCase() : 'S'}
+            </Avatar>
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<CloudUploadIcon />}
+              sx={{ mb: 1 }}
+            >
+              Upload Photo
+              <input type="file" hidden accept="image/*" onChange={handlePhotoUpload} />
+            </Button>
+            {newStudent.photo && (
+              <Typography variant="caption" sx={{ mb: 2 }}>
+                {newStudent.photo.name}
+              </Typography>
+            )}
+          </Box>
+
+          <Grid container spacing={2} justifyContent="center">
+            {[
+              { label: 'Full Name', name: 'fullName' },
+              { label: 'Admission Number', name: 'admissionNumber' },
+              { label: 'Age', name: 'age', type: 'number' },
+              { label: 'Phone', name: 'phone', type: 'tel' },
+              { label: 'Guardian Name', name: 'guidanceName' },
+              { label: 'Guardian Contact', name: 'guidanceContact', type: 'tel' }
+            ].map((field) => (
+              <Grid item xs={12} sm={6} key={field.name}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label={field.label}
+                  name={field.name}
+                  value={newStudent[field.name]}
+                  onChange={handleInputChange}
+                  type={field.type || 'text'}
+                />
+              </Grid>
+            ))}
+
+            <Grid item xs={12} sm={6}>
+              <Autocomplete
+                options={sections}
+                value={newStudent.section}
+                onChange={(e, value) => handleAutocompleteChange('section', value)}
+                renderInput={(params) => (
+                  <TextField {...params} label="Section" size="small" required />
+                )}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
+              <Autocomplete
+                options={availableClasses}
+                value={newStudent.className}
+                onChange={(e, value) => handleAutocompleteChange('className', value)}
+                renderInput={(params) => (
+                  <TextField {...params} label="Class" size="small" required />
+                )}
+                disabled={!newStudent.section}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
+              <Autocomplete
+                options={genders}
+                value={newStudent.gender}
+                onChange={(e, value) => handleAutocompleteChange('gender', value)}
+                renderInput={(params) => (
+                  <TextField {...params} label="Gender" size="small" required />
+                )}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+
+        <DialogActions sx={{ justifyContent: 'center', p: 2 }}>
+          <Button onClick={handleModalClose} variant="outlined" sx={{ minWidth: 100 }}>
+            Cancel
+          </Button>
+          <Button onClick={handleAddStudent} variant="contained" sx={{ minWidth: 100 }}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+export default Students;
+
+// GET all teachers
+router.get('/', async (req, res) => {
+  try {
+    const { schoolName } = req.query;
+    if (!schoolName) {
+      return res.status(400).json({ success: false, error: 'schoolName is required' });
+    }
+
+    const schoolDbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+    const schoolDb = await getSchoolDbConnection(schoolDbName);
+
+    const result = await schoolDb.query('SELECT * FROM teachers');
+    schoolDb.release();
+
+    return res.json({ success: true, teachers: result.rows });
+  } catch (error) {
+    console.error('Error fetching teachers:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch teachers' });
+  }
+});
+
+// GET a specific teacher by ID
+router.get('/:id', async (req, res) => {
+  try {
+    const { schoolName } = req.query;
+    const { id } = req.params;
+
+    if (!schoolName) {
+      return res.status(400).json({ success: false, error: 'schoolName is required' });
+    }
+
+    const schoolDbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+    const schoolDb = await getSchoolDbConnection(schoolDbName);
+
+    const result = await schoolDb.query('SELECT * FROM teachers WHERE teacher_id = $1', [id]);
+    schoolDb.release();
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, error: 'Teacher not found' });
+    }
+
+    return res.json({ success: true, teacher: result.rows[0] });
+  } catch (error) {
+    console.error('Error fetching teacher:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch teacher' });
+  }
+});
+
+
+// DELETE route - must match frontend request exactly
+router.delete('/delete/:id', async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+
+  try {
+    // 1. Get school details first
+    const schoolQuery = 'SELECT name, logo FROM schools WHERE id = $1';
+    const schoolResult = await client.query(schoolQuery, [id]);
+    
+    if (schoolResult.rows.length === 0) {
+      return res.status(404).json({ message: 'School not found' });
+    }
+
+    const school = schoolResult.rows[0];
+
+    // 2. Delete related admins
+    await client.query('DELETE FROM admins WHERE school_id = $1', [id]);
+
+    // 3. Delete the school
+    await client.query('DELETE FROM schools WHERE id = $1', [id]);
+
+    // 4. Try to drop the school's database
+    const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
+    try {
+      await client.query('DROP DATABASE IF EXISTS ' + dbName);
+    } catch (dbError) {
+      console.error('Database drop failed:', dbError);
+      // Continue even if database deletion fails
+    }
+
+    // 5. Delete logo file if exists
+    if (school.logo) {
+      const fs = require('fs');
+      const logoPath = path.join(__dirname, '../uploads/logos', school.logo);
+      fs.unlink(logoPath, (err) => {
+        if (err) console.error('Logo deletion failed:', err);
+      });
+    }
+
+    res.json({ success: true, message: 'School deleted successfully' });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ success: false, message: 'Failed to delete school' });
+  } finally {
+    client.release();
+  }
+});
+router.post('/add-student', upload.single('photo'), async (req, res) => {
+  let schoolDb;
+  let centralDb;
+  
+  try {
+    const { schoolName, section, student } = req.body;
+    const normalizedSection = section.toLowerCase();
+    const parsedStudent = JSON.parse(student);
+
+    // Validation checks
+    if (!schoolName || !section || !parsedStudent.full_name || !parsedStudent.class_name || !parsedStudent.gender) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const validSections = ['primary', 'junior', 'senior'];
+    if (!validSections.includes(normalizedSection)) {
+      return res.status(400).json({ message: 'Invalid section' });
+    }
+
+    const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+    
+    // Connect to both databases
+    schoolDb = await getSchoolDbConnection(dbName);
+    centralDb = await pool.connect();
+    
+    // Generate admission number
+    const getPrefixFromSchoolName = (name) =>
+      name.split(' ').map(w => w.charAt(0)).join('').toUpperCase();
+
+    const sectionCodes = { primary: 'PR', junior: 'JS', senior: 'SS' };
+    const prefix = getPrefixFromSchoolName(schoolName);
+    const sectionCode = sectionCodes[normalizedSection];
+    const currentYear = new Date().getFullYear();
+
+    const studentTableName = `${normalizedSection}_students`;
+    const countResult = await schoolDb.query(`SELECT COUNT(*) FROM ${studentTableName}`);
+    const count = parseInt(countResult.rows[0].count, 10) + 1;
+    const admissionNumber = `${prefix}/${sectionCode}/${currentYear}/${String(count).padStart(3, '0')}`;
+
+    const photoUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
+    // Start transactions
+    await schoolDb.query('BEGIN');
+    await centralDb.query('BEGIN');
+
+    try {
+   
+      const schoolInfo = await centralDb.query(
+        'SELECT logo FROM schools WHERE name = $1', // Changed to 'name' or whatever your column is
+        [schoolName.trim()]
+      );
+      const schoolLogo = schoolInfo.rows[0]?.logo || null;
+
+     // Insert into school-specific student table 
+await schoolDb.query(
+  `INSERT INTO ${studentTableName} 
+   (full_name, admission_number, class_name, section, gender, age, guidance_name, guidance_contact, photo_url, disability_status)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+  [
+    parsedStudent.full_name.trim(),
+    admissionNumber,
+    parsedStudent.class_name,
+    normalizedSection,
+    parsedStudent.gender,
+    parsedStudent.age || null,
+    parsedStudent.guidance_name || null,
+    parsedStudent.guidance_contact || null,
+    photoUrl,
+    parsedStudent.disability_status || null
+  ]
+);
+// Generate a random 4-character password
+function generateRandomPassword(length = 4) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+// Use it in your DB insert
+const studentPassword = generateRandomPassword();
+console.log(`Generated password for ${admissionNumber}: ${studentPassword}`);
+
+await centralDb.query(
+  `INSERT INTO students_login (admission_number, password, school_db_name, school_name, logo)
+   VALUES ($1, $2, $3, $4, $5)`,
+  [
+    admissionNumber,
+    studentPassword,
+    dbName,
+    schoolName.trim(),
+    schoolLogo
+  ]
+);
+
+      // Commit both transactions
+      await schoolDb.query('COMMIT');
+      await centralDb.query('COMMIT');
+
+return res.status(201).json({
+  success: true,
+  message: 'Student added successfully',
+  admissionNumber,
+  password: studentPassword, 
+  student: {
+    ...parsedStudent,
+    admissionNumber,
+    section: normalizedSection,
+    photoUrl
+  }
+});
+
+    } catch (err) {
+      // Rollback both transactions if any error occurs
+      await schoolDb.query('ROLLBACK');
+      await centralDb.query('ROLLBACK');
+      console.error('Transaction error:', err);
+      throw err;
+    }
+  } catch (err) {
+    console.error('Error:', err);
+    // Only send response if not already sent
+    if (!res.headersSent) {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Internal server error', 
+        error: err.message 
+      });
+    }
+  } finally {
+    // Ensure connections are always released
+    if (schoolDb) await schoolDb.end(); // Changed from release() to end()
+    if (centralDb) centralDb.release();
+  }
+});
