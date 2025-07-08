@@ -1,12 +1,15 @@
+//util/dbSwitcher.js
 const { Pool } = require('pg');
 
-function getSchoolDbConnection(schoolDbName) {
+function getSchoolDbConnection() {
   return new Pool({
-    user: 'postgres',
-    host: 'localhost',
-    database: schoolDbName,
-    password: '001995',
-    port: 5432,
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { 
+      rejectUnauthorized: false 
+    } : false,
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000
   });
 }
 

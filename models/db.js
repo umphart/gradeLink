@@ -1,12 +1,11 @@
 const { Pool } = require('pg');
 
+// In your main db.js
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 5, // Optimal pool size for free tier
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-  application_name: 'school-management-app'
+  ssl: process.env.NODE_ENV === 'production' ? { 
+    rejectUnauthorized: false 
+  } : false
 });
 
 // Enhanced connection logging
