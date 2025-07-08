@@ -46,7 +46,23 @@ const upload = multer({
 app.post('/schools/register', upload.single('schoolLogo'), async (req, res) => {
   let client;
   try {
-    const { school, admin } = req.body;
+    const school = {
+  name: req.body.school_name,
+  email: req.body.school_email,
+  phone: req.body.school_phone,
+  address: req.body.school_address,
+  city: req.body.school_city,
+  state: req.body.school_state
+};
+
+const admin = {
+  firstName: req.body.admin_firstName,
+  lastName: req.body.admin_lastName,
+  email: req.body.admin_email,
+  phone: req.body.admin_phone,
+  password: req.body.admin_password
+};
+
     
     // Validate required fields
     const requiredFields = {
