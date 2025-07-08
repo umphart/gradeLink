@@ -1,5 +1,4 @@
 const db = require('../models/db');
-const bcrypt = require('bcryptjs');
 
 exports.registerSchool = async (req, res) => {
   const client = await db.connect();

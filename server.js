@@ -53,8 +53,8 @@ app.use('/api/subjects', subjectsRouter);
 
 
 // Test route
-app.get('/api/test', (req, res) => {
-  res.json({ message: 'Backend is working!' });
+app.get('/', (req, res) => {
+  res.send('GradeLink Backend is Running');
 });
 
 app.listen(PORT, () => {
