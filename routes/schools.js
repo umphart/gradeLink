@@ -1,35 +1,23 @@
 const express = require('express');
 const multer = require('multer');
-const { S3Client } = require('@aws-sdk/client-s3');
-const multerS3 = require('multer-s3');
-const bcrypt = require('bcrypt');
+const path = require('path');
 const pool = require('../models/db');
 const getSchoolDbConnection = require('../utils/dbSwitcher');
 const router = express.Router();
-const { body, validationResult } = require('express-validator');
 
-// Configure AWS S3 for file uploads
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+// Configure storage for school logos
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/logos/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${file.originalname}`;
+    cb(null, uniqueName);
   }
 });
 
-const upload = multer({
-  storage: multerS3({
-    s3: s3Client,
-    bucket: process.env.S3_BUCKET_NAME,
-    acl: 'public-read',
-    metadata: (req, file, cb) => {
-      cb(null, { fieldName: file.fieldname });
-    },
-    key: (req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `school-logos/${Date.now()}${ext}`);
-    }
-  }),
+const upload = multer({ 
+  storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
@@ -40,35 +28,36 @@ const upload = multer({
   }
 });
 
-const validateRegistration = [
-  body('data').exists().withMessage('Registration data is required'),
-  body('school.name').notEmpty().withMessage('School name is required'),
-  body('admin.email').isEmail().withMessage('Valid email is required'),
-  body('admin.password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
-];
-
-router.post('/register', upload.single('schoolLogo'), validateRegistration, async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array() 
-    });
-  }
-
+router.post('/register', upload.single('schoolLogo'), async (req, res) => {
   let client;
-  let schoolDb;
   try {
+    // Validate request
+    if (!req.body.data) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Missing registration data' 
+      });
+    }
+
     const { school, admin } = JSON.parse(req.body.data);
-    const logoUrl = req.file?.location || null;
+    const logoFile = req.file;
+
+    // Basic validation
+    if (!school.name || !admin.email || !admin.password) {
+      return res.status(400).json({
+        success: false,
+        message: 'School name, admin email and password are required'
+      });
+    }
 
     client = await pool.connect();
+
+    // Begin transaction
     await client.query('BEGIN');
 
     // 1. Insert school into central database
     const schoolInsertQuery = `
-      INSERT INTO schools (name, email, phone, address, city, state, logo_url)
+      INSERT INTO schools (name, email, phone, address, city, state, logo)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id;
     `;
@@ -80,35 +69,36 @@ router.post('/register', upload.single('schoolLogo'), validateRegistration, asyn
       school.address?.street || '',
       school.address?.city || '',
       school.address?.state || '',
-      logoUrl
+      logoFile?.filename || null
     ]);
 
     const schoolId = schoolResult.rows[0].id;
-    const schemaName = `school_${schoolId}`; // Use ID instead of name for security
 
-    // 2. Create schema for school (instead of separate database)
+    // 2. Create dedicated database for school
+    const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
+    
     try {
-      await client.query(`CREATE SCHEMA ${schemaName}`);
-      console.log(`✅ Schema created: ${schemaName}`);
+      await client.query('COMMIT'); // Commit before creating new database
+      await client.query(`CREATE DATABASE ${dbName}`);
+      console.log(`✅ Database created: ${dbName}`);
     } catch (error) {
-      console.error(`❌ Failed to create schema ${schemaName}:`, error);
+      console.error(`❌ Failed to create database ${dbName}:`, error);
       await client.query('ROLLBACK');
       return res.status(500).json({ 
         success: false,
-        message: 'Schema creation failed',
+        message: 'Database creation failed',
         error: error.message 
       });
     }
 
-    // 3. Initialize school schema
+    // 3. Initialize school database schema
     try {
-      schoolDb = getSchoolDbConnection(); // Same database, different schema
-      await createSchoolSchema(schoolDb, schemaName);
-
-      // 4. Insert admin user with hashed password
-      const saltRounds = 10;
-      const hashedPassword = await bcrypt.hash(admin.password, saltRounds);
+      const schoolDb = getSchoolDbConnection(dbName);
       
+      // Create all required tables
+      await createSchoolSchema(schoolDb, dbName);
+
+      // 4. Insert admin user
       await client.query('BEGIN');
       const adminInsertQuery = `
         INSERT INTO admins (first_name, last_name, email, phone, password, school_id)
@@ -121,7 +111,7 @@ router.post('/register', upload.single('schoolLogo'), validateRegistration, asyn
         admin.lastName,
         admin.email,
         admin.phone,
-        hashedPassword,
+        admin.password,
         schoolId
       ]);
       
@@ -131,18 +121,18 @@ router.post('/register', upload.single('schoolLogo'), validateRegistration, asyn
         success: true,
         message: 'School registered successfully',
         schoolId,
-        schemaName
+        dbName
       });
 
     } catch (err) {
       console.error('School initialization error:', err);
       await client.query('ROLLBACK');
       
-      // Cleanup created schema if initialization failed
+      // Attempt to clean up created database if initialization failed
       try {
-        await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
+        await client.query(`DROP DATABASE IF EXISTS ${dbName}`);
       } catch (cleanupError) {
-        console.error('Failed to cleanup schema:', cleanupError);
+        console.error('Failed to cleanup database:', cleanupError);
       }
 
       res.status(500).json({ 
@@ -162,82 +152,171 @@ router.post('/register', upload.single('schoolLogo'), validateRegistration, asyn
     });
   } finally {
     if (client) client.release();
-    if (schoolDb) await schoolDb.end();
   }
 });
 
 // Helper function to create school database schema
-async function createSchoolSchema(db, schemaName) {
+async function createSchoolSchema(schoolDb, dbName) {
   try {
-    // Create tables within the schema
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${schemaName}.students (
-        id SERIAL PRIMARY KEY,
-        full_name VARCHAR(255) NOT NULL,
-        admission_number VARCHAR(100) NOT NULL UNIQUE,
-        grade_level VARCHAR(20) CHECK (grade_level IN ('primary', 'junior', 'senior')),
-        class_name VARCHAR(100),
-        section VARCHAR(50),
-        gender VARCHAR(20),
-        date_of_birth DATE,
-        phone VARCHAR(20),
-        guidance_name VARCHAR(255),
-        guidance_contact VARCHAR(100),
-        disability_status TEXT,
-        photo_url TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    // Create student tables
+    const gradeLevels = ['primary', 'junior', 'senior'];
+    for (const grade of gradeLevels) {
+      await schoolDb.query(`
+        CREATE TABLE IF NOT EXISTS ${grade}_students (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          admission_number VARCHAR(100) NOT NULL,
+          studentId VARCHAR(50),
+          class_name VARCHAR(100),
+          section VARCHAR(50),
+          gender VARCHAR(20),
+          age INTEGER,
+          phone VARCHAR(20),
+          guidance_name VARCHAR(255),
+          guidance_contact VARCHAR(100),
+          disability_status TEXT,
+          photo_url TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log(`✅ ${grade}_students table created`);
+    }
 
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${schemaName}.sessions (
+    // Create sessions table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS sessions (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(20) UNIQUE NOT NULL,
+        session_name VARCHAR(20) UNIQUE NOT NULL,
         is_current BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${schemaName}.terms (
+    // Create terms table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS terms (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(20) UNIQUE NOT NULL,
+        term_name VARCHAR(20) UNIQUE NOT NULL,
         is_current BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${schemaName}.classes (
+    // Create classes table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS classes (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(50) UNIQUE NOT NULL,
+        class_name VARCHAR(50) UNIQUE NOT NULL,
         level VARCHAR(20) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${schemaName}.exams (
+    // Create exam tables for all classes
+    const allClasses = [
+      'primary1', 'primary2', 'primary3', 'primary4', 'primary5',
+      'jss1', 'jss2', 'jss3',
+      'ss1', 'ss2', 'ss3'
+    ];
+
+    for (const className of allClasses) {
+      await schoolDb.query(`
+        CREATE TABLE IF NOT EXISTS ${className}_exam (
+          id SERIAL PRIMARY KEY,
+          school_id INTEGER,
+          student_name VARCHAR(255) NOT NULL,
+          admission_number VARCHAR(100) NOT NULL,
+          class_name VARCHAR(100),
+          subject VARCHAR(100),
+          exam_mark INTEGER,
+          ca INTEGER,
+          total INTEGER,
+          remark TEXT,
+          average FLOAT,
+          position INTEGER,
+          session_id INTEGER REFERENCES sessions(id),
+          term_id INTEGER REFERENCES terms(id),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    }
+
+    // Create teachers table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS teachers (
         id SERIAL PRIMARY KEY,
-        student_id INTEGER REFERENCES ${schemaName}.students(id),
-        class_id INTEGER REFERENCES ${schemaName}.classes(id),
-        subject VARCHAR(100) NOT NULL,
-        exam_score DECIMAL(5,2),
-        ca_score DECIMAL(5,2),
-        total_score DECIMAL(5,2),
-        remark TEXT,
-        session_id INTEGER REFERENCES ${schemaName}.sessions(id),
-        term_id INTEGER REFERENCES ${schemaName}.terms(id),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        school_id INTEGER,
+        teacher_id VARCHAR(100) UNIQUE NOT NULL,
+        teacher_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255),
+        phone VARCHAR(20),
+        teacherID VARCHAR(50),
+        gender VARCHAR(10),
+        department VARCHAR(100),
+        photo_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    console.log(`✅ Successfully initialized schema: ${schemaName}`);
+    // Create subjects table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS subjects (
+        id SERIAL PRIMARY KEY,
+        subject_name VARCHAR(255) NOT NULL,
+        description TEXT,
+        classname VARCHAR(100), 
+        subject_code VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Create teacher_subjects table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS teacher_subjects (
+        id SERIAL PRIMARY KEY,
+        teacher_id VARCHAR(50) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
+        teacher_name VARCHAR(100),
+        subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+        subject_name VARCHAR(100),
+        subject_code VARCHAR(20),
+        classname VARCHAR(100),
+        UNIQUE (teacher_id, subject_id)
+      );
+    `);
+
+    // Create teacher_classes table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS teacher_classes (
+        id SERIAL PRIMARY KEY,
+        teacher_id VARCHAR(50) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
+        teacher_name VARCHAR(100),
+        teacher_code VARCHAR(50),
+        class_name VARCHAR(50),
+        section VARCHAR(50),
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (class_name, section)
+      );
+    `);
+
+    // Create attendance table
+    await schoolDb.query(`
+      CREATE TABLE IF NOT EXISTS attendance (
+        id SERIAL PRIMARY KEY,
+        student_id INTEGER NOT NULL,
+        class_name VARCHAR(50) NOT NULL,
+        date DATE NOT NULL,
+        status VARCHAR(10) NOT NULL CHECK (status IN ('present', 'absent', 'late')),
+        remark TEXT,
+        recorded_by VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (student_id, date)
+      );
+    `);
+
+    console.log(`✅ Successfully initialized schema for ${dbName}`);
   } catch (err) {
-    console.error(`❌ Failed to initialize schema ${schemaName}:`, err);
-    throw err;
+    console.error(`❌ Failed to initialize schema for ${dbName}:`, err);
+    throw err; // Re-throw to be caught by the calling function
   }
 }
 

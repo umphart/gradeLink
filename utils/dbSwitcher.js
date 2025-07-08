@@ -1,4 +1,4 @@
-//util/dbSwitcher.js
+//util/dbSwitcher.
 const { Pool } = require('pg');
 
 function getSchoolDbConnection() {
