@@ -168,21 +168,17 @@ const admin = {
     });
 
   } catch (error) {
-    await client?.query('ROLLBACK');
-    
-    if (error.code === '23505') { // Unique violation
-      return res.status(409).json({
-        success: false,
-        message: 'Email already exists'
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Registration failed',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  } finally {
+  await client?.query('ROLLBACK');
+
+  console.error('Server Registration Error:', error); // Add this line to see real cause
+
+  res.status(500).json({
+    success: false,
+    message: 'Registration failed',
+    error: process.env.NODE_ENV === 'development' ? error.message : undefined
+  });
+}
+finally {
     client?.release();
   }
 });
