@@ -45,6 +45,10 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
+app.use((req, res, next) => {
+  console.log(`🔍 ${req.method} ${req.url}`);
+  next();
+})
 // Registration endpoint
 app.post('/schools/register', upload.single('schoolLogo'), async (req, res) => {
   let client;
@@ -169,6 +173,9 @@ app.post('/schools/register', upload.single('schoolLogo'), async (req, res) => {
       message: 'Registration failed',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+    console.log('Received form data:', req.body);
+console.log('Received file:', req.file);
+
   } finally {
     client?.release();
   }
