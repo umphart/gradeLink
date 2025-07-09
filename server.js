@@ -173,6 +173,9 @@ app.post('/schools/register', upload.single('schoolLogo'), async (req, res) => {
     client?.release();
   }
 });
+app.get('/', (req, res) => {
+  res.send('GradeLink API is running ✅');
+});
 
 // Start server
 const PORT = process.env.PORT || 5000;
