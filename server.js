@@ -2,10 +2,17 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 
 const app = express();
+
+// Ensure upload directory exists
+const uploadDir = process.env.UPLOAD_DIR || './uploads';
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 // CORS Configuration
 app.use(cors({
@@ -27,17 +34,13 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// File upload configuration
+// File upload config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, process.env.UPLOAD_DIR || './uploads');
-  },
-  filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
-  }
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
@@ -46,24 +49,24 @@ const upload = multer({
 app.post('/schools/register', upload.single('schoolLogo'), async (req, res) => {
   let client;
   try {
+    // Map flat field names to structured objects
     const school = {
-  name: req.body.school_name,
-  email: req.body.school_email,
-  phone: req.body.school_phone,
-  address: req.body.school_address,
-  city: req.body.school_city,
-  state: req.body.school_state
-};
+      name: req.body.school_name,
+      email: req.body.school_email,
+      phone: req.body.school_phone,
+      address: req.body.school_address,
+      city: req.body.school_city,
+      state: req.body.school_state
+    };
 
-const admin = {
-  firstName: req.body.admin_firstName,
-  lastName: req.body.admin_lastName,
-  email: req.body.admin_email,
-  phone: req.body.admin_phone,
-  password: req.body.admin_password
-};
+    const admin = {
+      firstName: req.body.admin_firstName,
+      lastName: req.body.admin_lastName,
+      email: req.body.admin_email,
+      phone: req.body.admin_phone,
+      password: req.body.admin_password
+    };
 
-    
     // Validate required fields
     const requiredFields = {
       school: ['name', 'email', 'address'],
@@ -72,14 +75,14 @@ const admin = {
 
     const missingFields = [];
     for (const field of requiredFields.school) {
-      if (!school?.[field]) missingFields.push(`School ${field}`);
+      if (!school[field]) missingFields.push(`School ${field}`);
     }
     for (const field of requiredFields.admin) {
-      if (!admin?.[field]) missingFields.push(`Admin ${field}`);
+      if (!admin[field]) missingFields.push(`Admin ${field}`);
     }
 
     if (missingFields.length > 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         message: `Missing required fields: ${missingFields.join(', ')}`
       });
@@ -87,42 +90,32 @@ const admin = {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-   if (!emailRegex.test(school.email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid school email format'
-      });
+    if (!emailRegex.test(school.email)) {
+      return res.status(400).json({ success: false, message: 'Invalid school email format' });
     }
-
     if (!emailRegex.test(admin.email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid admin email format'
-      });
+      return res.status(400).json({ success: false, message: 'Invalid admin email format' });
     }
 
     client = await pool.connect();
 
-    // Check if email already exists
+    // Check existing emails
     const checkQuery = `
       SELECT EXISTS(SELECT 1 FROM schools WHERE email = $1) AS school_exists,
              EXISTS(SELECT 1 FROM admins WHERE email = $2) AS admin_exists
     `;
-    const { rows: [{ school_exists, admin_exists }] } = await client.query(
-      checkQuery, 
-      [school.email, admin.email]
-    );
-    
+    const { rows: [{ school_exists, admin_exists }] } = await client.query(checkQuery, [school.email, admin.email]);
+
     if (school_exists || admin_exists) {
       return res.status(409).json({
         success: false,
-        message: school_exists 
-          ? 'School with this email already exists' 
+        message: school_exists
+          ? 'School with this email already exists'
           : 'Admin with this email already exists'
       });
     }
 
-    // Begin transaction
+    // Start transaction
     await client.query('BEGIN');
 
     // Insert school
@@ -131,7 +124,7 @@ const admin = {
       VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id
     `;
-    const schoolRes = await client.query(schoolQuery, [
+    const schoolResult = await client.query(schoolQuery, [
       school.name,
       school.email,
       school.phone || null,
@@ -141,7 +134,7 @@ const admin = {
       req.file?.filename || null
     ]);
 
-    const schoolId = schoolRes.rows[0].id;
+    const schoolId = schoolResult.rows[0].id;
 
     // Hash password and insert admin
     const hashedPassword = await bcrypt.hash(admin.password, 10);
@@ -160,7 +153,7 @@ const admin = {
     ]);
 
     await client.query('COMMIT');
-    
+
     res.status(201).json({
       success: true,
       message: 'Registration successful',
@@ -168,17 +161,15 @@ const admin = {
     });
 
   } catch (error) {
-  await client?.query('ROLLBACK');
+    await client?.query('ROLLBACK');
+    console.error('🔥 Server Registration Error:', error);
 
-  console.error('Server Registration Error:', error); // Add this line to see real cause
-
-  res.status(500).json({
-    success: false,
-    message: 'Registration failed',
-    error: process.env.NODE_ENV === 'development' ? error.message : undefined
-  });
-}
-finally {
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
     client?.release();
   }
 });
@@ -186,5 +177,5 @@ finally {
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
