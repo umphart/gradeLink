@@ -180,6 +180,68 @@ console.log('Received file:', req.file);
     client?.release();
   }
 });
+
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key'; // Use env in production
+
+// Admin login route
+app.post('/admins/login', async (req, res) => {
+  const { email, password } = req.body;
+  let client;
+
+  if (!email || !password) {
+    return res.status(400).json({ success: false, message: 'Email and password are required' });
+  }
+
+  try {
+    client = await pool.connect();
+
+    // Find admin by email
+    const adminResult = await client.query(
+      'SELECT * FROM admins WHERE email = $1',
+      [email]
+    );
+
+    if (adminResult.rows.length === 0) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    const admin = adminResult.rows[0];
+
+    // Compare password
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: admin.id, email: admin.email, school_id: admin.school_id },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      admin: {
+        id: admin.id,
+        email: admin.email,
+        firstName: admin.first_name,
+        lastName: admin.last_name,
+        schoolId: admin.school_id
+      }
+    });
+
+  } catch (error) {
+    console.error('🔥 Admin Login Error:', error);
+    res.status(500).json({ success: false, message: 'Server error during login' });
+  } finally {
+    client?.release();
+  }
+});
+
 app.get('/', (req, res) => {
   res.send('GradeLink API is running ✅');
 });
