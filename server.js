@@ -214,6 +214,15 @@ app.post('/admins/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
+    // Fetch school info
+    const schoolResult = await client.query(
+      'SELECT name, logo FROM schools WHERE id = $1',
+      [admin.school_id]
+    );
+
+    const school = schoolResult.rows[0];
+    console.log('🏫 Logged-in admin school info:', school); // Log school info to console
+
     // Generate JWT token
     const token = jwt.sign(
       { id: admin.id, email: admin.email, school_id: admin.school_id },
@@ -230,7 +239,9 @@ app.post('/admins/login', async (req, res) => {
         email: admin.email,
         firstName: admin.first_name,
         lastName: admin.last_name,
-        schoolId: admin.school_id
+        schoolId: admin.school_id,
+        schoolName: school?.name || null,
+        logo: school?.logo || null
       }
     });
 
@@ -241,6 +252,7 @@ app.post('/admins/login', async (req, res) => {
     client?.release();
   }
 });
+
 
 app.get('/', (req, res) => {
   res.send('GradeLink API is running ✅');
