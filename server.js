@@ -9,7 +9,7 @@ const bcrypt = require('bcrypt');
 const app = express();
 
 // Ensure upload directory exists
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
+ const uploadDir = process.env.UPLOAD_DIR || './uploads';
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -24,6 +24,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
