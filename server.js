@@ -35,10 +35,8 @@ app.use((req, res, next) => {
 
 // Routes
 const schoolRoutes = require('./routes/schools');
-const loginRoutes = require('./routes/login');
 
 app.use('/api/schools', schoolRoutes);
-app.use('/api/login', loginRoutes);
 
 // Health check
 app.get('/', (req, res) => {

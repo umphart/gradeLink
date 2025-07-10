@@ -14,7 +14,11 @@ const pool = new Pool({
   },
   max: 5,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000
+  connectionTimeoutMillis: 10000, // Increased from 5000 to 10000
+  retry: {
+    max: 3, // Maximum number of retries
+    timeout: 5000 // Time between retries
+  }
 });
 
 // Events
