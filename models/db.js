@@ -40,4 +40,4 @@ pool.on('error', (err) => {
   }
 })();
 
-module.exports = pool; // ✅ Export only the pool
+module.exports = pool; 
