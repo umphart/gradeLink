@@ -32,6 +32,7 @@ const upload = multer({
 // School Registration Endpoint
 router.post('/register', upload.single('school_logo'), async (req, res) => {
   let client;
+  let schoolDb;
   try {
     // Validate required fields (using snake_case to match frontend)
     const requiredFields = [
@@ -141,132 +142,156 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
   }
 });
 
-// Helper function to create all school tables
 async function createSchoolTables(db, dbName) {
-  // Create student tables
-  const gradeLevels = ['primary', 'junior', 'senior'];
-  for (const grade of gradeLevels) {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${grade}_students (
+  let client;
+  try {
+    client = await db.connect();
+    console.log(`⏳ Creating tables in database: ${dbName}`);
+    
+    // Create all tables in a transaction
+    await client.query('BEGIN');
+    
+    // Create student tables
+    const gradeLevels = ['primary', 'junior', 'senior'];
+    for (const grade of gradeLevels) {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${grade}_students (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          admission_number VARCHAR(100) NOT NULL,
+          studentId VARCHAR(50),
+          class_name VARCHAR(100),
+          section VARCHAR(50),
+          gender VARCHAR(20),
+          age INTEGER,
+          phone VARCHAR(20),
+          guidance_name VARCHAR(255),
+          guidance_contact VARCHAR(100),
+          disability_status TEXT,
+          photo_url TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log(`✅ Created ${grade}_students table`);
+    }
+
+    // Create sessions and terms tables
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sessions (
         id SERIAL PRIMARY KEY,
-        full_name VARCHAR(255) NOT NULL,
-        admission_number VARCHAR(100) NOT NULL,
-        studentId VARCHAR(50),
-        class_name VARCHAR(100),
-        section VARCHAR(50),
-        gender VARCHAR(20),
-        age INTEGER,
+        session_name VARCHAR(20) UNIQUE NOT NULL 
+      );
+    `);
+    console.log('✅ Created sessions table');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS terms (
+        id SERIAL PRIMARY KEY,
+        term_name VARCHAR(20) UNIQUE NOT NULL 
+      );
+    `);
+    console.log('✅ Created terms table');
+
+    // Create exam tables for all classes
+    const allClasses = [
+      'primary1', 'primary2', 'primary3', 'primary4', 'primary5',
+      'jss1', 'jss2', 'jss3',
+      'ss1', 'ss2', 'ss3'
+    ];
+
+    for (const className of allClasses) {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${className}_exam (
+          id SERIAL PRIMARY KEY,
+          school_id INTEGER,
+          student_name VARCHAR(255) NOT NULL,
+          admission_number VARCHAR(100) NOT NULL,
+          class_name VARCHAR(100),
+          subject VARCHAR(100),
+          exam_mark INTEGER,
+          ca INTEGER,
+          total INTEGER,
+          remark TEXT,
+          average FLOAT,
+          position INTEGER,
+          session_id INTEGER REFERENCES sessions(id),
+          term_id INTEGER REFERENCES terms(id),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log(`✅ Created ${className}_exam table`);
+    }
+
+    // Create teachers table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS teachers (
+        id SERIAL PRIMARY KEY,
+        school_id INTEGER,
+        teacher_id VARCHAR(100) UNIQUE NOT NULL,
+        teacher_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255),
         phone VARCHAR(20),
-        guidance_name VARCHAR(255),
-        guidance_contact VARCHAR(100),
-        disability_status TEXT,
+        teacherID VARCHAR(50),
+        gender VARCHAR(10),
+        department VARCHAR(100),
         photo_url TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-  }
+    console.log('✅ Created teachers table');
 
-  // Create sessions and terms tables
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id SERIAL PRIMARY KEY,
-      session_name VARCHAR(20) UNIQUE NOT NULL 
-    );
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS terms (
-      id SERIAL PRIMARY KEY,
-      term_name VARCHAR(20) UNIQUE NOT NULL 
-    );
-  `);
-
-  // Create exam tables for all classes
-  const allClasses = [
-    'primary1', 'primary2', 'primary3', 'primary4', 'primary5',
-    'jss1', 'jss2', 'jss3',
-    'ss1', 'ss2', 'ss3'
-  ];
-
-  for (const className of allClasses) {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS ${className}_exam (
+    // Create subjects table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS subjects (
         id SERIAL PRIMARY KEY,
-        school_id INTEGER,
-        student_name VARCHAR(255) NOT NULL,
-        admission_number VARCHAR(100) NOT NULL,
-        class_name VARCHAR(100),
-        subject VARCHAR(100),
-        exam_mark INTEGER,
-        ca INTEGER,
-        total INTEGER,
-        remark TEXT,
-        average FLOAT,
-        position INTEGER,
-        session_id INTEGER REFERENCES sessions(id),
-        term_id INTEGER REFERENCES terms(id),
+        subject_name VARCHAR(255) NOT NULL,
+        description TEXT,
+        classname VARCHAR(100), 
+        subject_code VARCHAR(100) UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    console.log('✅ Created subjects table');
+
+    // Create teacher-subjects relationship table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS teacher_subjects (
+        id SERIAL PRIMARY KEY,
+        teacher_id VARCHAR(50) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
+        teacher_name VARCHAR(100),
+        subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+        subject_name VARCHAR(100),
+        subject_code VARCHAR(20),
+        classname VARCHAR(100),
+        UNIQUE (teacher_id, subject_id)
+      );
+    `);
+    console.log('✅ Created teacher_subjects table');
+
+    // Create teacher-classes relationship table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS teacher_classes (
+        id SERIAL PRIMARY KEY,
+        teacher_id VARCHAR(50) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
+        teacher_name VARCHAR(100),
+        teacher_code VARCHAR(50),
+        class_name VARCHAR(50),
+        section VARCHAR(50),
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (class_name, section)
+      );
+    `);
+    console.log('✅ Created teacher_classes table');
+
+    await client.query('COMMIT');
+    console.log(`🎉 All tables created successfully in ${dbName}`);
+  } catch (err) {
+    if (client) await client.query('ROLLBACK');
+    console.error(`❌ Error creating tables in ${dbName}:`, err);
+    throw err;
+  } finally {
+    if (client) client.release();
   }
-
-  // Create teachers table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS teachers (
-      id SERIAL PRIMARY KEY,
-      school_id INTEGER,
-      teacher_id VARCHAR(100) UNIQUE NOT NULL,
-      teacher_name VARCHAR(255) NOT NULL,
-      email VARCHAR(255),
-      phone VARCHAR(20),
-      teacherID VARCHAR(50),
-      gender VARCHAR(10),
-      department VARCHAR(100),
-      photo_url TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-  // Create subjects table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS subjects (
-      id SERIAL PRIMARY KEY,
-      subject_name VARCHAR(255) NOT NULL,
-      description TEXT,
-      classname VARCHAR(100), 
-      subject_code VARCHAR(100) UNIQUE NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-  // Create teacher-subjects relationship table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS teacher_subjects (
-      id SERIAL PRIMARY KEY,
-      teacher_id VARCHAR(50) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
-      teacher_name VARCHAR(100),
-      subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
-      subject_name VARCHAR(100),
-      subject_code VARCHAR(20),
-      classname VARCHAR(100),
-      UNIQUE (teacher_id, subject_id)
-    );
-  `);
-
-  // Create teacher-classes relationship table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS teacher_classes (
-      id SERIAL PRIMARY KEY,
-      teacher_id VARCHAR(50) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
-      teacher_name VARCHAR(100),
-      teacher_code VARCHAR(50),
-      class_name VARCHAR(50),
-      section VARCHAR(50),
-      assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (class_name, section)
-    );
-  `);
 }
-
 
 module.exports = router;
