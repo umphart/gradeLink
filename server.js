@@ -66,7 +66,7 @@ app.use('/api/import', importExam)
 app.use('/api/import', importTeachers)
 app.use('/api/import', importRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/schools', schoolRoutes);
+app.use('/api/schools', schoolRoutes);
 app.use('/api/login', loginRoutes);
 app.use('/api/students', students);
 app.use('/api/studentsLogin', studentsLogin);
