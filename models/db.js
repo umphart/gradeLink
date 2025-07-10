@@ -1,27 +1,47 @@
 const { Pool } = require('pg');
+const fs = require('fs');
 
+// Database configuration
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 5, // Optimal pool size for free tier
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-  application_name: 'school-management-app'
+  user: 'school_admin',
+  host: 'dpg-d1mfbe2dbo4c73f8apig-a.oregon-postgres.render.com',
+  database: 'school_management_aymr',
+  password: 'gF3BgZ6FIZJ6A0dIUyhjtRA9cZ4o7VBe',
+  port: 5432,
+  ssl: {
+    rejectUnauthorized: false, // For development only
+    // For production (uncomment and configure):
+    // ca: fs.readFileSync('path/to/render-cert.pem').toString()
+  },
+  max: 5, // Maximum number of connections in pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 5000 // Return error if connection not established in 5 seconds
 });
 
-// Enhanced connection logging
-pool.on('connect', (client) => {
-  console.log(`🟢 New DB connection established (Total: ${pool.totalCount})`);
+// Connection event listeners
+pool.on('connect', () => {
+  console.log('🟢 Database connection established');
 });
 
 pool.on('error', (err) => {
-  console.error('🔴 Database error:', err);
+  console.error('🔴 Database connection error:', err);
 });
 
+// Test connection on startup
+(async () => {
+  try {
+    const client = await pool.connect();
+    console.log('✅ Successfully connected to Render PostgreSQL');
+    const res = await client.query('SELECT NOW()');
+    console.log('📅 Database time:', res.rows[0].now);
+    client.release();
+  } catch (err) {
+    console.error('❌ Failed to connect to database:', err);
+    process.exit(1);
+  }
+})();
+
 module.exports = {
-  query: (text, params) => {
-    console.log('Executing query:', text);
-    return pool.query(text, params);
-  },
+  query: (text, params) => pool.query(text, params),
   pool
 };
