@@ -29,8 +29,8 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
-// School Registration Endpoint
-router.post('/register', upload.single('logo'), async (req, res) => {
+// School Registration Endpoint - Changed to expect 'schoolLogo'
+router.post('/register', upload.single('schoolLogo'), async (req, res) => {
   let client;
   try {
     // Validate request body
@@ -103,7 +103,7 @@ router.post('/register', upload.single('logo'), async (req, res) => {
     );
     await client.query('COMMIT');
 
-    res.status(201).json({ 
+   res.status(201).json({ 
       success: true,
       message: 'School registered successfully',
       schoolId
@@ -122,6 +122,7 @@ router.post('/register', upload.single('logo'), async (req, res) => {
     if (client) client.release();
   }
 });
+
 
 // Helper function to create all school tables
 async function createSchoolTables(db, dbName) {
@@ -249,5 +250,6 @@ async function createSchoolTables(db, dbName) {
     );
   `);
 }
+
 
 module.exports = router;
