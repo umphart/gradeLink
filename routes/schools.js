@@ -29,23 +29,40 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
-// School Registration Endpoint - Changed to expect 'schoolLogo'
-router.post('/register', upload.single('schoolLogo'), async (req, res) => {
+// School Registration Endpoint
+router.post('/register', upload.single('school_logo'), async (req, res) => {
   let client;
   try {
-    // Validate request body
-    if (!req.body.name || !req.body.email || !req.body.adminEmail || !req.body.adminPassword) {
+    // Validate required fields (using snake_case to match frontend)
+    const requiredFields = [
+      'school_name',
+      'school_email',
+      'school_phone',
+      'school_address', 
+      'school_city',
+      'school_state',
+      'admin_firstName',
+      'admin_lastName',
+      'admin_email',
+      'admin_phone',
+      'admin_password'
+    ];
+
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
       if (req.file) fs.unlink(req.file.path, () => {});
       return res.status(400).json({ 
         success: false,
-        message: 'Missing required fields' 
+        message: 'Missing required fields',
+        missingFields: missingFields.join(', ')
       });
     }
 
     client = await pool.connect();
     await client.query('BEGIN');
 
-    // Step 1: Insert school into central DB
+    // Step 1: Insert school into central DB (using snake_case fields)
     const schoolInsert = `
       INSERT INTO schools (name, email, phone, address, city, state, logo)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -53,19 +70,19 @@ router.post('/register', upload.single('schoolLogo'), async (req, res) => {
     `;
 
     const schoolResult = await client.query(schoolInsert, [
-      req.body.name,
-      req.body.email,
-      req.body.phone,
-      req.body.address,
-      req.body.city,
-      req.body.state,
+      req.body.school_name,
+      req.body.school_email,
+      req.body.school_phone,
+      req.body.school_address,
+      req.body.school_city,
+      req.body.school_state,
       req.file?.filename || null,
     ]);
 
     const schoolId = schoolResult.rows[0].id;
 
     // Step 2: Create dedicated database for school
-    const dbName = `school_${req.body.name.replace(/\s+/g, '_').toLowerCase()}`;
+    const dbName = `school_${req.body.school_name.replace(/\s+/g, '_').toLowerCase()}`;
     
     try {
       await client.query('COMMIT'); // End current transaction
@@ -86,24 +103,24 @@ router.post('/register', upload.single('schoolLogo'), async (req, res) => {
       throw new Error('Failed to initialize school database');
     }
 
-    // Step 4: Create admin account
+    // Step 4: Create admin account (using snake_case fields)
     await client.query('BEGIN');
-    const hashedPassword = await bcrypt.hash(req.body.adminPassword, 10);
+    const hashedPassword = await bcrypt.hash(req.body.admin_password, 10);
     await client.query(
       `INSERT INTO admins (first_name, last_name, email, phone, password, school_id)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [
-        req.body.adminFirstName,
-        req.body.adminLastName,
-        req.body.adminEmail,
-        req.body.adminPhone,
+        req.body.admin_firstName,
+        req.body.admin_lastName,
+        req.body.admin_email,
+        req.body.admin_phone,
         hashedPassword,
         schoolId
       ]
     );
     await client.query('COMMIT');
 
-   res.status(201).json({ 
+    res.status(201).json({ 
       success: true,
       message: 'School registered successfully',
       schoolId
@@ -116,13 +133,13 @@ router.post('/register', upload.single('schoolLogo'), async (req, res) => {
     
     res.status(500).json({ 
       success: false,
-      message: err.message || 'Registration failed'
+      message: err.message || 'Registration failed',
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
     });
   } finally {
     if (client) client.release();
   }
 });
-
 
 // Helper function to create all school tables
 async function createSchoolTables(db, dbName) {
