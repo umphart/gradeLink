@@ -42,7 +42,7 @@ app.use('/api/login', loginRoutes);
 
 // Health check
 app.get('/', (req, res) => {
-  res.send('GradeLink API is running ✅');
+  res.send('GradeLink API is running............ ✅');
 });
 
 // Error handling middleware
