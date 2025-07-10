@@ -9,7 +9,7 @@ const router = express.Router();
 // Storage for uploaded logos
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/logos/');
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
     const uniqueName = Date.now() + '-' + file.originalname;
