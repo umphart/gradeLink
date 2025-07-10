@@ -1,7 +1,8 @@
+// models/db.js
 const { Pool } = require('pg');
 const fs = require('fs');
 
-// Database configuration
+// PostgreSQL pool config
 const pool = new Pool({
   user: 'school_admin',
   host: 'dpg-d1mfbe2dbo4c73f8apig-a.oregon-postgres.render.com',
@@ -9,16 +10,14 @@ const pool = new Pool({
   password: 'gF3BgZ6FIZJ6A0dIUyhjtRA9cZ4o7VBe',
   port: 5432,
   ssl: {
-    rejectUnauthorized: false, // For development only
-    // For production (uncomment and configure):
-    // ca: fs.readFileSync('path/to/render-cert.pem').toString()
+    rejectUnauthorized: false
   },
-  max: 5, // Maximum number of connections in pool
-  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 5000 // Return error if connection not established in 5 seconds
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000
 });
 
-// Connection event listeners
+// Events
 pool.on('connect', () => {
   console.log('🟢 Database connection established');
 });
@@ -27,7 +26,7 @@ pool.on('error', (err) => {
   console.error('🔴 Database connection error:', err);
 });
 
-// Test connection on startup
+// Test connection
 (async () => {
   try {
     const client = await pool.connect();
@@ -41,7 +40,4 @@ pool.on('error', (err) => {
   }
 })();
 
-module.exports = {
-  query: (text, params) => pool.query(text, params),
-  pool
-};
+module.exports = pool; // ✅ Export only the pool
