@@ -3,6 +3,10 @@ const express = require('express');
 const pool = require('../models/db');
 const router = express.Router();
 
+// Add these middleware
+router.use(express.json()); // for parsing application/json
+router.use(express.urlencoded({ extended: true }));
+
 router.post('/', async (req, res) => {
   const { email, password } = req.body;
 
