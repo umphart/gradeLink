@@ -1,6 +1,7 @@
 // routes/login.js
 const express = require('express');
 const pool = require('../models/db');
+const bcrypt = require('bcryptjs'); // Add bcrypt for password comparison
 const router = express.Router();
 
 router.post('/', async (req, res) => {
@@ -8,7 +9,7 @@ router.post('/', async (req, res) => {
   if (!req.body || !req.body.email || !req.body.password) {
     return res.status(400).json({ 
       message: 'Email and password are required',
-      receivedBody: req.body // This helps debugging what was actually received
+      receivedBody: req.body
     });
   }
 
@@ -17,20 +18,32 @@ router.post('/', async (req, res) => {
   try {
     const client = await pool.connect();
 
+    // First, find the user by email only
     const result = await client.query(
       `SELECT a.*, s.name as school_name, s.logo 
        FROM admins a
        JOIN schools s ON a.school_id = s.id
-       WHERE a.email = $1 AND a.password = $2`,
-      [email, password]
+       WHERE a.email = $1`,
+      [email]
     );
 
     if (result.rows.length === 0) {
       console.error('Failed login attempt for email:', email);
-      return res.status(400).json({ message: 'Invalid email or password' });
+      client.release();
+      return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     const user = result.rows[0];
+    
+    // Compare the provided password with the hashed password in database
+    const passwordMatch = bcrypt.compareSync(password, user.password);
+    
+    if (!passwordMatch) {
+      console.error('Password mismatch for email:', email);
+      client.release();
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
     client.release();
 
     res.status(200).json({
@@ -49,14 +62,9 @@ router.post('/', async (req, res) => {
     console.error('Login error:', err);
     res.status(500).json({ 
       message: 'Internal server error',
-      error: err.message // Include the actual error message
+      error: err.message
     });
   }
-});
-
-// Student login remains the same
-router.post('/students', async (req, res) => {
-  // ... existing student login code ...
 });
 
 module.exports = router;
