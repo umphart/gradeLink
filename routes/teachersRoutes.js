@@ -74,24 +74,29 @@ async function generateTeacherId(schoolDb, school, department) {
 
 // Route to add a single teacher
 
+// Update the route to handle file uploads
 router.post(
   '/add-teacher',
-  upload.none(), // This will parse multipart/form-data without saving files
+  upload.single('photo'), // This will handle single file upload for 'photo' field
   async (req, res) => {
     let schoolDb;
     let centralDb;
 
     try {
+      // Get fields from both body and file
       const { schoolName, fullName, department, email, phone, gender } = req.body;
+      const photo = req.file; // This will contain the uploaded file info
       
       if (!schoolName || !fullName || !department) {
+        // Clean up uploaded file if validation fails
+        if (photo) fs.unlinkSync(photo.path);
         return res.status(400).json({
           success: false,
           message: 'School name, full name, and department are required',
         });
       }
 
-      // Connect to central DB and fetch school info
+      // Connect to databases and process as before
       centralDb = await pool.connect();
       const schoolInfo = await centralDb.query(
         'SELECT id, name, logo FROM schools WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
@@ -99,6 +104,7 @@ router.post(
       );
 
       if (schoolInfo.rows.length === 0) {
+        if (photo) fs.unlinkSync(photo.path);
         return res.status(404).json({
           success: false,
           message: 'School not found',
@@ -115,15 +121,29 @@ router.post(
       const teacherId = await generateTeacherId(schoolDb, school, department);
       const teacherPassword = generateRandomPassword();
 
-      // Insert teacher record
+      // Handle photo path if uploaded
+      let photoPath = null;
+      if (photo) {
+        photoPath = `/uploads/imports/${photo.filename}`;
+      }
+
+      // Insert teacher record with photo
       await schoolDb.query(
         `INSERT INTO teachers 
-          (teacher_id, full_name, email, phone, gender, department)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [teacherId, fullName.trim(), email?.trim(), phone?.trim(), gender?.trim(), department.trim()]
+          (teacher_id, full_name, email, phone, gender, department, photo)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          teacherId, 
+          fullName.trim(), 
+          email?.trim(), 
+          phone?.trim(), 
+          gender?.trim(), 
+          department.trim(),
+          photoPath
+        ]
       );
 
-      // Insert login credentials
+      // Rest of your insertion logic remains the same
       await centralDb.query(
         `INSERT INTO teachers_login (teacher_id, password, school_db_name, school_name, logo)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -142,12 +162,15 @@ router.post(
           email,
           phone,
           gender,
-          password: teacherPassword
+          password: teacherPassword,
+          photo: photoPath
         }
       });
 
     } catch (err) {
       if (schoolDb) await schoolDb.query('ROLLBACK');
+      // Clean up uploaded file if error occurs
+      if (req.file) fs.unlinkSync(req.file.path);
       
       console.error('Add teacher error:', err);
       
