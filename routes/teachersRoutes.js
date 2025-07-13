@@ -114,7 +114,7 @@ router.post('/add-teacher', async (req, res) => {
     // Insert teacher record into school database
     await schoolDb.query(
       `INSERT INTO teachers 
-        (teacher_id, full_name, email, phone, gender, department)
+        (teacher_id, teacher_name, email, phone, gender, department)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [teacherId, fullName.trim(), email?.trim(), phone?.trim(), gender?.trim(), department.trim()]
     );
@@ -270,7 +270,7 @@ router.post('/import-teachers', upload.single('file'), async (req, res) => {
           // Insert teacher record
           await schoolDb.query(
             `INSERT INTO teachers 
-              (teacher_id, full_name, email, phone, gender, department)
+              (teacher_id, teacher_name, email, phone, gender, department)
              VALUES ($1, $2, $3, $4, $5, $6)`,
             [teacherId, fullName, email, phone, gender, department]
           );
@@ -336,4 +336,4 @@ router.post('/import-teachers', upload.single('file'), async (req, res) => {
   }
 });
 
-module.exports = router;    
+module.exports = router;
