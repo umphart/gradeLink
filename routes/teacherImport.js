@@ -167,7 +167,7 @@ router.post('/import-teachers', upload.single('file'), async (req, res) => {
           // Insert teacher record
           await schoolDb.query(
             `INSERT INTO teachers 
-              (teacher_id, full_name, email, phone, gender, department)
+              (teacher_id, name, email, phone, gender, department)
              VALUES ($1, $2, $3, $4, $5, $6)`,
             [teacherId, fullName, email, phone, gender, department]
           );
