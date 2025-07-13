@@ -36,7 +36,9 @@ app.use((req, res, next) => {
 // Routes
 const schoolRoutes = require('./routes/schools')
 const loginRoute = require('./routes/login')
+const teacherRoutes = require('./routes/teachersRoutes');
 
+app.use('/api/teachers', teacherRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/login', loginRoute);
 

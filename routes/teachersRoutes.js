@@ -1,35 +1,39 @@
+// routes/teacherImport.js
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const xlsx = require('xlsx');
+const csv = require('csv-parser');
 const pool = require('../models/db');
 const getSchoolDbConnection = require('../utils/dbSwitcher');
 
 const router = express.Router();
 
-// Ensure upload directory exists
-const uploadDir = path.join(__dirname, '../uploads');
+// Configure file upload
+const uploadDir = path.join(__dirname, '../uploads/imports');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Multer setup for image uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, uniqueName);
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
   },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'teachers-' + uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
-const upload = multer({
+const upload = multer({ 
   storage,
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.csv', '.xlsx', '.xls'].includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed!'), false);
+      cb(new Error('Only CSV and Excel files are allowed'));
     }
   },
   limits: {
@@ -37,266 +41,299 @@ const upload = multer({
   }
 });
 
-// Add teacher route
-router.post('/add', upload.single('photo'), async (req, res) => {
+// Helper function to generate random password
+function generateRandomPassword(length = 8) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+// Helper function to generate teacher ID
+async function generateTeacherId(schoolDb, school, department) {
+  const schoolPrefix = school.name
+    .split(' ')
+    .map(w => w.charAt(0).toUpperCase())
+    .join('')
+    .slice(0, 3);
+
+  const currentYear = new Date().getFullYear();
+  const depPrefix = department.toUpperCase().slice(0, 3);
+  
+  const countResult = await schoolDb.query(
+    'SELECT COUNT(*) FROM teachers WHERE department = $1',
+    [department]
+  );
+  const count = parseInt(countResult.rows[0].count || '0') + 1;
+  const serial = String(count).padStart(3, '0');
+  
+  return `${schoolPrefix}/${depPrefix}/${currentYear}/${serial}`;
+}
+
+// Route to add a single teacher
+router.post('/add-teacher', async (req, res) => {
   let schoolDb;
+  let centralDb;
+
   try {
-    // Validate required fields
-    if (!req.body.schoolName || !req.body.full_name || !req.body.department) {
-      return res.status(400).json({ 
+    const { schoolName, fullName, department, email, phone, gender } = req.body;
+    
+    if (!schoolName || !fullName || !department) {
+      return res.status(400).json({
         success: false,
-        error: 'schoolName, full_name, and department are required fields' 
+        message: 'School name, full name, and department are required',
       });
     }
 
-    const {
-      schoolName,
-      full_name,
-      email,
-      phone,
-      gender,
-      department
-    } = req.body;
-
-    // Trim and validate inputs
-    const trimmedSchoolName = schoolName.toString().trim();
-    const trimmedFullName = full_name.toString().trim();
-    const trimmedDepartment = department.toString().trim();
-
-    if (!trimmedSchoolName || !trimmedFullName || !trimmedDepartment) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Required fields cannot be empty' 
-      });
-    }
-
-    // Check if school exists
-    const schoolResult = await pool.query(
-      `SELECT id, logo FROM schools WHERE name = $1`,
-      [trimmedSchoolName]
+    // Connect to central DB and fetch school info
+    centralDb = await pool.connect();
+    const schoolInfo = await centralDb.query(
+      'SELECT id, name, logo FROM schools WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+      [schoolName]
     );
-    if (schoolResult.rowCount === 0) {
-      return res.status(404).json({ 
+
+    if (schoolInfo.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        error: 'School not found' 
+        message: 'School not found',
       });
     }
 
-    const { logo: schoolLogo } = schoolResult.rows[0];
+    const school = schoolInfo.rows[0];
+    const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
+    schoolDb = await getSchoolDbConnection(dbName);
 
-    // Prepare school database connection
-    const schoolDbName = `school_${trimmedSchoolName.replace(/\s+/g, '_').toLowerCase()}`;
-    schoolDb = await getSchoolDbConnection(schoolDbName);
-
-    // Generate teacher ID
-    const schoolPrefix = trimmedSchoolName
-      .split(' ')
-      .map(w => w.charAt(0).toUpperCase())
-      .join('')
-      .slice(0, 3);
-    const depPrefix = trimmedDepartment.toUpperCase().slice(0, 3);
-    const currentYear = new Date().getFullYear();
-
-    const countResult = await schoolDb.query(
-      'SELECT COUNT(*) FROM teachers WHERE department = $1',
-      [trimmedDepartment]
-    );
-    const count = parseInt(countResult.rows[0].count || '0') + 1;
-    const serial = String(count).padStart(3, '0');
-
-    const teacher_id = `${schoolPrefix}/${depPrefix}/${currentYear}/${serial}`;
-    const photo_url = req.file ? `/uploads/${req.file.filename}` : null;
-
-    // Validate email format if provided
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Invalid email format' 
-      });
-    }
-
-    // Start transaction
     await schoolDb.query('BEGIN');
 
-    // Insert into school-specific teachers table
+    // Generate teacher ID and password
+    const teacherId = await generateTeacherId(schoolDb, school, department);
+    const teacherPassword = generateRandomPassword();
+
+    // Insert teacher record into school database
     await schoolDb.query(
-      `INSERT INTO teachers (teacher_id, teacher_name, email, phone, gender, department, photo_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        teacher_id,
-        trimmedFullName,
-        email ? email.trim() : null,
-        phone ? phone.trim() : null,
-        gender,
-        trimmedDepartment,
-        photo_url
-      ]
+      `INSERT INTO teachers 
+        (teacher_id, teacher_name, email, phone, gender, department)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [teacherId, fullName.trim(), email?.trim(), phone?.trim(), gender?.trim(), department.trim()]
     );
 
-    function generateRandomPassword(length = 4) {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      let password = '';
-      for (let i = 0; i < length; i++) {
-        password += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return password;
-    }
-
-    const teacherPassword = generateRandomPassword();
-    console.log(`Generated password for ${teacher_id}: ${teacherPassword}`);
-
-    await pool.query(
+    // Insert into central teachers_login table
+    await centralDb.query(
       `INSERT INTO teachers_login (teacher_id, password, school_db_name, school_name, logo)
        VALUES ($1, $2, $3, $4, $5)`,
       [
-        teacher_id,
-        teacherPassword,
-        schoolDbName,
-        trimmedSchoolName,
-        schoolLogo
+        teacherId,
+        teacherPassword, 
+        dbName,
+        school.name,
+        school.logo
       ]
     );
 
-    // Respond to frontend with generated password
+    await schoolDb.query('COMMIT');
+
     return res.status(201).json({
       success: true,
       message: 'Teacher added successfully',
-      teacher_id,
-      password: teacherPassword
+      teacher: {
+        teacherId,
+        name: fullName,
+        department,
+        email,
+        phone,
+        gender,
+        password: teacherPassword // Include password in the response
+      }
     });
+
   } catch (err) {
-    // Rollback transaction if any error occurs
-    if (schoolDb) {
-      await schoolDb.query('ROLLBACK').catch(rollbackErr => {
-        console.error('Error rolling back transaction:', rollbackErr);
+    if (schoolDb) await schoolDb.query('ROLLBACK');
+    
+    console.error('Add teacher error:', err);
+    
+    if (err.code === '23505') { // Unique violation
+      return res.status(409).json({ 
+        success: false, 
+        message: 'Teacher with similar details already exists'
       });
     }
 
-    console.error('Error adding teacher:', err);
-
-    // Clean up uploaded file if an error occurred
-    if (req.file) {
-      fs.unlink(path.join(uploadDir, req.file.filename), () => {});
-    }
-
-    const errorMessage = err.code === '23505' 
-      ? 'Teacher with these details already exists' 
-      : 'Failed to add teacher';
-
     return res.status(500).json({ 
-      success: false,
-      error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      success: false, 
+      message: 'Failed to add teacher', 
+      error: err.message
     });
   } finally {
-    // Release the school database connection
-    if (schoolDb) {
-      schoolDb.release();
-    }
+    if (schoolDb) await schoolDb.end();
+    if (centralDb) centralDb.release();
   }
 });
 
-// Get all teachers for a specific school
-router.get('/', async (req, res) => {
-  const { schoolName } = req.query;
+// Existing import teachers route
+router.post('/import-teachers', upload.single('file'), async (req, res) => {
   let schoolDb;
+  let centralDb;
 
   try {
-    if (!schoolName) {
-      return res.status(400).json({ error: 'schoolName is required' });
+    const { schoolName } = req.body;
+    if (!schoolName || !req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'School name and file are required',
+      });
     }
 
-    const trimmedSchoolName = schoolName.toString().trim();
-    const schoolDbName = `school_${trimmedSchoolName.replace(/\s+/g, '_').toLowerCase()}`;
-
-    schoolDb = await getSchoolDbConnection(schoolDbName);
-
-    const result = await schoolDb.query('SELECT * FROM teachers ORDER BY teacher_name ASC');
-
-    res.json(result.rows);
-
-  } catch (error) {
-    console.error('Error fetching teachers:', error);
-    res.status(500).json({ error: 'Failed to fetch teachers' });
-  } 
-});
-
-// GET a specific teacher by ID
-router.get('/:id', async (req, res) => {
-  try {
-    const { schoolName } = req.query;
-    const { id } = req.params;
-
-    if (!schoolName) {
-      return res.status(400).json({ success: false, error: 'schoolName is required' });
-    }
-
-    const schoolDbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
-    const schoolDb = await getSchoolDbConnection(schoolDbName);
-
-    const result = await schoolDb.query('SELECT * FROM teachers WHERE teacher_id = $1', [id]);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, error: 'Teacher not found' });
-    }
-
-    return res.json({ success: true, teacher: result.rows[0] });
-  } catch (error) {
-    console.error('Error fetching teacher:', error);
-    return res.status(500).json({ success: false, error: 'Failed to fetch teacher' });
-  }
-});
-
-router.post('/assign-class', async (req, res) => {
-  const { schoolName, teacher_id, className, section } = req.body;
-
-  if (!schoolName || !teacher_id || !className || !section) {
-    return res.status(400).json({ message: 'Missing required fields' });
-  }
-
-  const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
-
-  try {
-    const schoolDb = await getSchoolDbConnection(dbName);
-
-    // Get teacher details using teacher_id (not UUID)
-    const teacherQuery = await schoolDb.query(
-      'SELECT teacher_name, teacher_id FROM teachers WHERE teacher_id = $1',
-      [teacher_id]
+    // Connect to central DB and fetch school info
+    centralDb = await pool.connect();
+    const schoolInfo = await centralDb.query(
+      'SELECT id, name, logo FROM schools WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+      [schoolName]
     );
 
-    if (teacherQuery.rows.length === 0) {
-      return res.status(404).json({ message: 'Teacher not found' });
+    if (schoolInfo.rows.length === 0) {
+      // Clean up uploaded file
+      if (req.file) fs.unlinkSync(req.file.path);
+      
+      return res.status(404).json({
+        success: false,
+        message: 'School not found',
+      });
     }
 
-    const { teacher_name, teacher_id: teacherDbId } = teacherQuery.rows[0];
+    const school = schoolInfo.rows[0];
+    const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
+    schoolDb = await getSchoolDbConnection(dbName);
 
-    const insertQuery = `
-      INSERT INTO teacher_classes (
-        teacher_id, teacher_name, teacher_code, class_name, section
-      )
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (class_name, section) DO UPDATE
-      SET teacher_id = $1, teacher_name = $2, teacher_code = $3, assigned_at = CURRENT_TIMESTAMP
-      RETURNING *;
-    `;
+    // Process uploaded file
+    const filePath = req.file.path;
+    const fileExt = path.extname(req.file.originalname).toLowerCase();
+    let teachers = [];
 
-    const result = await schoolDb.query(insertQuery, [
-      teacherDbId,    // Use the renamed variable
-      teacher_name,
-      teacherDbId,    // Use the renamed variable
-      className,
-      section
-    ]);
+    if (fileExt === '.csv') {
+      await new Promise((resolve, reject) => {
+        fs.createReadStream(filePath)
+          .pipe(csv())
+          .on('data', (row) => teachers.push(row))
+          .on('end', resolve)
+          .on('error', reject);
+      });
+    } else if (fileExt === '.xlsx' || fileExt === '.xls') {
+      const workbook = xlsx.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      teachers = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    }
 
-    res.status(201).json({ 
-      message: 'Class assigned to teacher successfully', 
-      assignment: result.rows[0] 
-    });
+    if (teachers.length === 0) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: 'No teacher data found in the file',
+      });
+    }
+
+    const requiredFields = ['full_name', 'department'];
+    const errors = [];
+    const successfullyImported = [];
+
+    await schoolDb.query('BEGIN');
+
+    try {
+      for (const [index, teacher] of teachers.entries()) {
+        const rowNumber = index + 2; // +2 because header is row 1 and arrays are 0-based
+        
+        // Validate required fields
+        const missingFields = requiredFields.filter(field => !teacher[field]);
+        if (missingFields.length > 0) {
+          errors.push(`Row ${rowNumber}: Missing required fields - ${missingFields.join(', ')}`);
+          continue;
+        }
+
+        // Trim and validate data
+        const fullName = (teacher.full_name || '').toString().trim();
+        const department = (teacher.department || '').toString().trim();
+        const email = teacher.email ? teacher.email.toString().trim() : null;
+        const phone = teacher.phone ? teacher.phone.toString().trim() : null;
+        const gender = teacher.gender ? teacher.gender.toString().trim() : null;
+
+        if (!fullName || !department) {
+          errors.push(`Row ${rowNumber}: Name and department cannot be empty`);
+          continue;
+        }
+
+        // Generate teacher ID and password
+        const teacherId = await generateTeacherId(schoolDb, school, department);
+        const teacherPassword = generateRandomPassword();
+
+        try {
+          // Insert teacher record
+          await schoolDb.query(
+            `INSERT INTO teachers 
+              (teacher_id, teacher_name, email, phone, gender, department)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [teacherId, fullName, email, phone, gender, department]
+          );
+
+          // Insert into central teachers_login table
+          await centralDb.query(
+            `INSERT INTO teachers_login (teacher_id, password, school_db_name, school_name, logo)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              teacherId,
+              teacherPassword, 
+              dbName,
+              school.name,
+              school.logo
+            ]
+          );
+
+          successfullyImported.push({
+            name: fullName,
+            teacherId,
+            department,
+            password: teacherPassword
+          });
+        } catch (err) {
+          if (err.code === '23505') { // Unique violation
+            errors.push(`Row ${rowNumber}: Teacher with similar details already exists`);
+          } else {
+            errors.push(`Row ${rowNumber}: Database error - ${err.message}`);
+          }
+        }
+      }
+
+      await schoolDb.query('COMMIT');
+      fs.unlinkSync(filePath);
+
+      return res.status(200).json({
+        success: true,
+        message: `Imported ${successfullyImported.length} of ${teachers.length} teachers`,
+        imported: successfullyImported,
+        errors: errors.length > 0 ? errors : undefined,
+      });
+    } catch (err) {
+      await schoolDb.query('ROLLBACK');
+      throw err;
+    }
   } catch (err) {
-    console.error('Error assigning class to teacher:', err);
-    res.status(500).json({ message: 'Failed to assign class', error: err.message });
+    console.error('Import error:', err);
+    
+    // Clean up uploaded file if error occurred
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to import teachers', 
+      error: err.message,
+      errors: [err.message]
+    });
+  } finally {
+    if (schoolDb) await schoolDb.end();
+    if (centralDb) centralDb.release();
   }
 });
 
-module.exports = router;
+module.exports = router;    
