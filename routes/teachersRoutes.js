@@ -1,4 +1,3 @@
-// routes/teacherImport.js
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -10,13 +9,19 @@ const getSchoolDbConnection = require('../utils/dbSwitcher');
 
 const router = express.Router();
 
-// Configure file upload
+// Configure directories
 const uploadDir = path.join(__dirname, '../uploads/imports');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+const teacherPhotoDir = path.join(__dirname, '../uploads/teachers');
 
-const storage = multer.diskStorage({
+// Create directories if they don't exist
+[uploadDir, teacherPhotoDir].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+// Storage for bulk imports
+const importStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
@@ -26,8 +31,20 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
-  storage,
+// Storage for teacher photos
+const photoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, teacherPhotoDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'teacher-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+// Configure upload for bulk imports
+const uploadImport = multer({ 
+  storage: importStorage,
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (['.csv', '.xlsx', '.xls'].includes(ext)) {
@@ -38,6 +55,21 @@ const upload = multer({
   },
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+// Configure upload for teacher photos
+const uploadPhoto = multer({ 
+  storage: photoStorage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 2 * 1024 * 1024 // 2MB limit
   }
 });
 
@@ -72,15 +104,31 @@ async function generateTeacherId(schoolDb, school, department) {
   return `${schoolPrefix}/${depPrefix}/${currentYear}/${serial}`;
 }
 
-// Route to add a single teacher
-router.post('/add-teacher', async (req, res) => {
+// Route to add a single teacher with photo upload
+router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
   let schoolDb;
   let centralDb;
 
   try {
-    const { schoolName, fullName, department, email, phone, gender } = req.body;
+    console.log('Request body:', req.body);
+    console.log('Uploaded file:', req.file);
+
+    const { 
+      schoolName, 
+      schoolId,
+      full_name, 
+      department, 
+      email, 
+      phone, 
+      gender 
+    } = req.body;
     
-    if (!schoolName || !fullName || !department) {
+    // Validate required fields
+    if (!schoolName || !full_name || !department) {
+      // Clean up uploaded file if validation fails
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(400).json({
         success: false,
         message: 'School name, full name, and department are required',
@@ -95,6 +143,7 @@ router.post('/add-teacher', async (req, res) => {
     );
 
     if (schoolInfo.rows.length === 0) {
+      if (req.file) fs.unlinkSync(req.file.path);
       return res.status(404).json({
         success: false,
         message: 'School not found',
@@ -114,9 +163,17 @@ router.post('/add-teacher', async (req, res) => {
     // Insert teacher record into school database
     await schoolDb.query(
       `INSERT INTO teachers 
-        (teacher_id, full_name, email, phone, gender, department)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [teacherId, fullName.trim(), email?.trim(), phone?.trim(), gender?.trim(), department.trim()]
+        (teacher_id, full_name, email, phone, gender, department, photo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        teacherId, 
+        full_name.trim(), 
+        email?.trim(), 
+        phone?.trim(), 
+        gender?.trim(), 
+        department.trim(),
+        req.file ? `/uploads/teachers/${req.file.filename}` : null
+      ]
     );
 
     // Insert into central teachers_login table
@@ -139,17 +196,20 @@ router.post('/add-teacher', async (req, res) => {
       message: 'Teacher added successfully',
       teacher: {
         teacherId,
-        name: fullName,
+        name: full_name,
         department,
         email,
         phone,
         gender,
-        password: teacherPassword // Include password in the response
+        photo: req.file ? `/uploads/teachers/${req.file.filename}` : null,
+        password: teacherPassword
       }
     });
 
   } catch (err) {
     if (schoolDb) await schoolDb.query('ROLLBACK');
+    // Clean up uploaded file if error occurs
+    if (req.file) fs.unlinkSync(req.file.path);
     
     console.error('Add teacher error:', err);
     
@@ -170,5 +230,7 @@ router.post('/add-teacher', async (req, res) => {
     if (centralDb) centralDb.release();
   }
 });
+
+
 
 module.exports = router;
