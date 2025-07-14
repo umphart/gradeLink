@@ -263,7 +263,7 @@ router.get('/', async (req, res) => {
 
     // Fetch teachers from school database
     const teachers = await schoolDb.query(
-      'SELECT teacher_id, full_name, email, phone, gender, department, photo FROM teachers'
+      'SELECT teacher_id, full_name, email, phone, gender, department, photo_url FROM teachers'
     );
 
     return res.status(200).json({
