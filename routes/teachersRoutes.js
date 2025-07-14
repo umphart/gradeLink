@@ -163,7 +163,7 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
     // Insert teacher record into school database
     await schoolDb.query(
       `INSERT INTO teachers 
-        (teacher_id, full_name, email, phone, gender, department, photo)
+        (teacher_id, full_name, email, phone, gender, department, photo_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         teacherId, 
