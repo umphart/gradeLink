@@ -202,7 +202,7 @@ router.post('/add-student', upload.single('photo'), async (req, res) => {
   }
 });
 
-router.get('/students', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { schoolName } = req.query;
 
