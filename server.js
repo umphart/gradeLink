@@ -37,10 +37,12 @@ app.use((req, res, next) => {
 const schoolRoutes = require('./routes/schools')
 const loginRoute = require('./routes/login')
 const teacherRoutes = require('./routes/teachersRoutes');
+const teachersLoginRoute = require('./routes/teachersLogin');
 
 app.use('/api/teachers', teacherRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/login', loginRoute);
+app.use('/api/teachers-login', teachersLoginRoute);
 
 // Health check
 app.get('/', (req, res) => {
