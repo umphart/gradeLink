@@ -11,68 +11,63 @@ router.post('/', async (req, res) => {
   }
 
   let centralDb;
-  let schoolDb;
 
   try {
     centralDb = await pool.connect();
 
-    // Get ALL matching records (since UNIQUE constraint removed)
+    // Step 1: Authenticate from central teachers_login
     const result = await centralDb.query(
-      `SELECT * FROM teachers_login WHERE teacher_id = $1`,
-      [teacherId]
+      `SELECT * FROM teachers_login WHERE teacher_id = $1 AND password = $2`,
+      [teacherId, password]
     );
 
     if (result.rows.length === 0) {
       return res.status(401).json({ message: 'Invalid ID or password.' });
     }
 
-    // Find first record with matching password
-    const teacher = result.rows.find(row => {
-      // In production: use bcrypt.compareSync(password, row.password)
-      return row.password === password; 
-    });
-
-    if (!teacher) {
-      return res.status(401).json({ message: 'Invalid ID or password.' });
-    }
-
+    const teacher = result.rows[0];
     const { school_db_name, school_name, logo } = teacher;
 
-    // Get school-specific connection
+    // Step 2: Query teacher details in school DB
     const schoolDbPool = await getSchoolDbPool(school_db_name);
-    schoolDb = await schoolDbPool.connect();
+    const schoolDb = await schoolDbPool.connect();
 
     const teacherDetailsRes = await schoolDb.query(
       `SELECT * FROM teachers WHERE teacher_id = $1`,
       [teacherId]
     );
 
-    if (teacherDetailsRes.rows.length === 0) {
+    const teacherDetails = teacherDetailsRes.rows[0];
+
+    if (!teacherDetails) {
       return res.status(404).json({ message: 'Teacher details not found.' });
     }
 
-    const teacherDetails = teacherDetailsRes.rows[0];
 
-    return res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      user: {
-        ...teacherDetails,
-        schoolName: school_name,
-        schoolDbName: school_db_name,
-        logo,
-      },
-    });
+return res.status(200).json({
+  success: true,
+  message: 'Login successful',
+  user: {
+    id: teacherDetails.id,
+    teacherId: teacherDetails.teacher_id,
+    fullName: teacherDetails.teacher_name,
+    email: teacherDetails.email,
+    phone: teacherDetails.phone,
+    department: teacherDetails.department,
+    photoUrl: teacherDetails.photo_url,
+    gender: teacherDetails.gender,
+    schoolName: school_name,
+    schoolDbName: school_db_name,
+    logo,
+  },
+});
+
 
   } catch (err) {
     console.error('Teacher login error:', err);
-    return res.status(500).json({ 
-      message: 'Internal server error', 
-      error: err.message 
-    });
+    return res.status(500).json({ message: 'Internal server error', error: err.message });
   } finally {
     if (centralDb) centralDb.release();
-    if (schoolDb) schoolDb.release();
   }
 });
 
