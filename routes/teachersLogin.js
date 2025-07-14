@@ -64,8 +64,8 @@ return res.status(200).json({
 
 
   } catch (err) {
-    console.error('Teacher login error:', err);
-    return res.status(500).json({ message: 'Internal server error', error: err.message });
+   console.error('Teacher login error:', err.stack || err.message || err);
+    return res.status(500).json({ message: 'Internal server error', error: err.stack || err.message || 'Unknown error' });
   } finally {
     if (centralDb) centralDb.release();
   }
