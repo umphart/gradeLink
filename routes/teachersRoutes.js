@@ -230,7 +230,58 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
     if (centralDb) centralDb.release();
   }
 });
+// Add this route to your teacherImport.js or teachersRoutes.js
+router.get('/', async (req, res) => {
+  let schoolDb;
+  try {
+    const { schoolName } = req.query;
+    
+    if (!schoolName) {
+      return res.status(400).json({
+        success: false,
+        message: 'School name is required'
+      });
+    }
 
+    // Connect to central DB to get school info
+    const centralDb = await pool.connect();
+    const schoolInfo = await centralDb.query(
+      'SELECT id, name FROM schools WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+      [schoolName]
+    );
+
+    if (schoolInfo.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'School not found'
+      });
+    }
+
+    const school = schoolInfo.rows[0];
+    const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
+    schoolDb = await getSchoolDbConnection(dbName);
+
+    // Fetch teachers from school database
+    const teachers = await schoolDb.query(
+      'SELECT teacher_id, full_name, email, phone, gender, department, photo FROM teachers'
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: teachers.rows
+    });
+
+  } catch (err) {
+    console.error('Error fetching teachers:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch teachers',
+      error: err.message
+    });
+  } finally {
+    if (schoolDb) await schoolDb.end();
+  }
+});
 
 
 module.exports = router;
