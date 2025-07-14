@@ -20,24 +20,99 @@ const teacherPhotoDir = path.join(__dirname, '../uploads/teachers');
   }
 });
 
-// Storage configurations (unchanged)
-const importStorage = multer.diskStorage({ /* ... */ });
-const photoStorage = multer.diskStorage({ /* ... */ });
+// Storage for bulk imports
+const importStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'teachers-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
 
-// Upload configurations (unchanged)
-const uploadImport = multer({ /* ... */ });
-const uploadPhoto = multer({ /* ... */ });
+// Storage for teacher photos
+const photoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, teacherPhotoDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'teacher-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
 
-// Helper functions (unchanged)
-function generateRandomPassword(length = 8) { /* ... */ }
-async function generateTeacherId(schoolDb, school, department) { /* ... */ }
+// Configure upload for bulk imports
+const uploadImport = multer({ 
+  storage: importStorage,
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.csv', '.xlsx', '.xls'].includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV and Excel files are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
 
-// Improved add teacher route
+// Configure upload for teacher photos
+const uploadPhoto = multer({ 
+  storage: photoStorage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 2 * 1024 * 1024 // 2MB limit
+  }
+});
+
+// Helper function to generate random password
+function generateRandomPassword(length = 8) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+// Helper function to generate teacher ID
+async function generateTeacherId(schoolDb, school, department) {
+  const schoolPrefix = school.name
+    .split(' ')
+    .map(w => w.charAt(0).toUpperCase())
+    .join('')
+    .slice(0, 3);
+
+  const currentYear = new Date().getFullYear();
+  const depPrefix = department.toUpperCase().slice(0, 3);
+  
+  const countResult = await schoolDb.query(
+    'SELECT COUNT(*) FROM teachers WHERE department = $1',
+    [department]
+  );
+  const count = parseInt(countResult.rows[0].count || '0') + 1;
+  const serial = String(count).padStart(3, '0');
+  
+  return `${schoolPrefix}/${depPrefix}/${currentYear}/${serial}`;
+}
+
+// Route to add a single teacher with photo upload
 router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
   let schoolDb;
   let centralDb;
 
   try {
+    console.log('Request body:', req.body);
+    console.log('Uploaded file:', req.file);
+
     const { 
       schoolName, 
       schoolId,
@@ -50,22 +125,21 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
     
     // Validate required fields
     if (!schoolName || !full_name || !department) {
-      if (req.file) fs.unlinkSync(req.file.path);
+      // Clean up uploaded file if validation fails
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(400).json({
         success: false,
         message: 'School name, full name, and department are required',
       });
     }
 
-    // Connect to central DB with timeout handling
+    // Connect to central DB and fetch school info
     centralDb = await pool.connect();
-    
-    // Normalize school name for query
-    const normalizedSchoolName = schoolName.trim().toLowerCase();
-    
     const schoolInfo = await centralDb.query(
-      'SELECT id, name, logo FROM schools WHERE LOWER(TRIM(name)) = $1 OR id = $2',
-      [normalizedSchoolName, schoolId || null]
+      'SELECT id, name, logo FROM schools WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+      [schoolName]
     );
 
     if (schoolInfo.rows.length === 0) {
@@ -78,9 +152,7 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
 
     const school = schoolInfo.rows[0];
     const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
-    
-    // Connect to school DB with timeout handling
-    schoolDb = await getSchoolDbConnection(dbName, { connectionTimeoutMillis: 10000 });
+    schoolDb = await getSchoolDbConnection(dbName);
 
     await schoolDb.query('BEGIN');
 
@@ -88,7 +160,7 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
     const teacherId = await generateTeacherId(schoolDb, school, department);
     const teacherPassword = generateRandomPassword();
 
-    // Insert teacher record
+    // Insert teacher record into school database
     await schoolDb.query(
       `INSERT INTO teachers 
         (teacher_id, full_name, email, phone, gender, department, photo_url)
@@ -135,30 +207,16 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
     });
 
   } catch (err) {
-    if (schoolDb) {
-      try {
-        await schoolDb.query('ROLLBACK');
-      } catch (rollbackErr) {
-        console.error('Rollback error:', rollbackErr);
-      }
-      await schoolDb.end();
-    }
-    
+    if (schoolDb) await schoolDb.query('ROLLBACK');
+    // Clean up uploaded file if error occurs
     if (req.file) fs.unlinkSync(req.file.path);
     
     console.error('Add teacher error:', err);
     
-    if (err.code === '23505') {
+    if (err.code === '23505') { // Unique violation
       return res.status(409).json({ 
         success: false, 
         message: 'Teacher with similar details already exists'
-      });
-    }
-
-    if (err.message.includes('timeout')) {
-      return res.status(504).json({
-        success: false,
-        message: 'Database connection timed out. Please try again.'
       });
     }
 
@@ -168,28 +226,28 @@ router.post('/add-teacher', uploadPhoto.single('photo'), async (req, res) => {
       error: err.message
     });
   } finally {
+    if (schoolDb) await schoolDb.end();
     if (centralDb) centralDb.release();
   }
 });
-
-// Improved get teachers route
+// Add this route to your teacherImport.js or teachersRoutes.js
 router.get('/', async (req, res) => {
   let schoolDb;
   try {
-    const { schoolName, schoolId } = req.query;
+    const { schoolName } = req.query;
     
-    if (!schoolName && !schoolId) {
+    if (!schoolName) {
       return res.status(400).json({
         success: false,
-        message: 'School name or ID is required'
+        message: 'School name is required'
       });
     }
 
+    // Connect to central DB to get school info
     const centralDb = await pool.connect();
-    
     const schoolInfo = await centralDb.query(
-      'SELECT id, name FROM schools WHERE LOWER(TRIM(name)) = $1 OR id = $2',
-      [schoolName?.trim().toLowerCase(), schoolId || null]
+      'SELECT id, name FROM schools WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+      [schoolName]
     );
 
     if (schoolInfo.rows.length === 0) {
@@ -201,8 +259,9 @@ router.get('/', async (req, res) => {
 
     const school = schoolInfo.rows[0];
     const dbName = `school_${school.name.replace(/\s+/g, '_').toLowerCase()}`;
-    schoolDb = await getSchoolDbConnection(dbName, { connectionTimeoutMillis: 10000 });
+    schoolDb = await getSchoolDbConnection(dbName);
 
+    // Fetch teachers from school database
     const teachers = await schoolDb.query(
       'SELECT teacher_id, full_name, email, phone, gender, department, photo_url FROM teachers'
     );
@@ -214,14 +273,6 @@ router.get('/', async (req, res) => {
 
   } catch (err) {
     console.error('Error fetching teachers:', err);
-    
-    if (err.message.includes('timeout')) {
-      return res.status(504).json({
-        success: false,
-        message: 'Database connection timed out. Please try again.'
-      });
-    }
-
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch teachers',
@@ -231,5 +282,6 @@ router.get('/', async (req, res) => {
     if (schoolDb) await schoolDb.end();
   }
 });
+
 
 module.exports = router;
