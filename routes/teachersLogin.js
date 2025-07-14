@@ -43,29 +43,30 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ message: 'Teacher details not found.' });
     }
 
-
-return res.status(200).json({
-  success: true,
-  message: 'Login successful',
-  user: {
-    id: teacherDetails.id,
-    teacherId: teacherDetails.teacher_id,
-    fullName: teacherDetails.teacher_name,
-    email: teacherDetails.email,
-    phone: teacherDetails.phone,
-    department: teacherDetails.department,
-    photoUrl: teacherDetails.photo_url,
-    gender: teacherDetails.gender,
-    schoolName: school_name,
-    schoolDbName: school_db_name,
-    logo,
-  },
-});
-
+    return res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      user: {
+        id: teacherDetails.id,
+        teacherId: teacherDetails.teacher_id,
+        fullName: teacherDetails.teacher_name,
+        email: teacherDetails.email,
+        phone: teacherDetails.phone,
+        department: teacherDetails.department,
+        photoUrl: teacherDetails.photo_url,
+        gender: teacherDetails.gender,
+        schoolName: school_name,
+        schoolDbName: school_db_name,
+        logo,
+      },
+    });
 
   } catch (err) {
-   console.error('Teacher login error:', err.stack || err.message || err);
-    return res.status(500).json({ message: 'Internal server error', error: err.stack || err.message || 'Unknown error' });
+    console.error('Teacher login error:', err.stack || err.message || err);
+    return res.status(500).json({ 
+      message: 'Internal server error', 
+      error: err.stack || err.message || 'Unknown error' 
+    });
   } finally {
     if (centralDb) centralDb.release();
   }
