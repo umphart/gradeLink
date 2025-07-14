@@ -1,13 +1,12 @@
 const { Pool } = require('pg');
 
-const getSchoolDbPool = (dbName) => {
+function getSchoolDbPool(schoolDbName) {
   return new Pool({
- user: 'postgres',
-    host: 'localhost',
-    database: dbName,
-    password: '001995',
-    port: 5432,
+    connectionString: `postgres://school_admin:gF3BgZ6FIZJ6A0dIUyhjtRA9cZ4o7VBe@dpg-d1mfbe2dbo4c73f8apig-a.oregon-postgres.render.com:5432/${schoolDbName}`,
+    ssl: {
+      rejectUnauthorized: false,
+    },
   });
-};
+}
 
 module.exports = getSchoolDbPool;
