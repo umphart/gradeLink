@@ -105,91 +105,34 @@ router.post('/import-subjects', upload.single('subjectsFile'), async (req, res) 
 });
 // Route: Add a new subject
 router.post('/add', async (req, res) => {
+  const { schoolName, subject_name, description, subject_code, classname } = req.body;
+
+  if (!schoolName || !subject_name || !subject_code || !classname) { // Fixed space before classname
+    return res.status(400).json({ message: 'Missing required fields' });
+  }
+
+  const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+
   try {
-    const { schoolName, subject_name, description, subject_code, classname } = req.body;
+    const schoolDb = await getSchoolDbConnection(dbName);
 
-    // Enhanced validation with specific error messages
-    const missingFields = [];
-    if (!schoolName) missingFields.push('schoolName');
-    if (!subject_name) missingFields.push('subject_name');
-    if (!subject_code) missingFields.push('subject_code');
-    if (!classname) missingFields.push('classname');
-
-    if (missingFields.length > 0) {
-      return res.status(400).json({ 
-        message: 'Missing required fields',
-        missingFields,
-        receivedData: req.body // Include received data for debugging
-      });
-    }
-
-    // Sanitize school name for database naming
-    const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
-    console.log(`Attempting to connect to database: ${dbName}`);
-
-    // Database connection with better error handling
-    let schoolDb;
-    try {
-      schoolDb = await getSchoolDbConnection(dbName);
-    } catch (dbConnError) {
-      console.error('Database connection failed:', dbConnError);
-      return res.status(500).json({ 
-        message: 'Failed to connect to school database',
-        error: dbConnError.message,
-        dbName
-      });
-    }
-
-    // Validate subject code format (example: at least 3 alphanumeric chars)
-    if (!/^[a-zA-Z0-9]{3,}$/.test(subject_code)) {
-      return res.status(400).json({ 
-        message: 'Subject code must be at least 3 alphanumeric characters'
-      });
-    }
-
-    // SQL query with parameterized values to prevent SQL injection
     const insertQuery = `
-      INSERT INTO subjects (name, description, code, class)
+      INSERT INTO subjects (subject_name, description, subject_code, classname)
       VALUES ($1, $2, $3, $4)
       RETURNING *;
     `;
 
-    console.log('Executing query:', insertQuery, {
-      params: [subject_name, description || null, subject_code, classname]
-    });
-
     const result = await schoolDb.query(insertQuery, [
       subject_name,
-      description || null, // Use NULL instead of empty string for description
+      description || '',
       subject_code,
       classname
     ]);
 
-    if (!result.rows[0]) {
-      throw new Error('Insert operation failed - no rows returned');
-    }
-
-    // Successful response
-    return res.status(201).json({ 
-      success: true,
-      message: 'Subject added successfully',
-      subject: result.rows[0],
-      timestamp: new Date().toISOString()
-    });
-
+    res.status(201).json({ message: 'Subject added successfully', subject: result.rows[0] });
   } catch (err) {
-    console.error('Server error:', {
-      error: err,
-      stack: err.stack,
-      requestBody: req.body
-    });
-
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Please contact support',
-      errorCode: 'SUBJECT_ADD_ERROR'
-    });
+    console.error('Error adding subject:', err);
+    res.status(500).json({ message: 'Failed to add subject', error: err.message });
   }
 });
 
