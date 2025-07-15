@@ -30,7 +30,7 @@ const upload = multer({
 });
 
 // School Registration Endpoint
-router.post('/register', upload.single('schoolLogo'), async (req, res) => {
+router.post('/register', upload.single('school_logo'), async (req, res) => {
   try {
     if (!req.body.data) {
       return res.status(400).json({ message: 'Missing registration data' });
