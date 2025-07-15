@@ -5,6 +5,7 @@ const fs = require('fs');
 const bcrypt = require('bcrypt');
 const pool = require('../models/db');
 const getSchoolDbConnection = require('../utils/dbSwitcher');
+const { log } = require('console');
 const router = express.Router();
 
 // Ensure uploads directory exists
@@ -30,6 +31,7 @@ const upload = multer({
 });
 
 router.post('/register', upload.single('school_logo'), async (req, res) => {
+  console.log('Registration data:', req.body.data);
   try {
     if (!req.body.data) {
       return res.status(400).json({ message: 'Missing registration data' });
