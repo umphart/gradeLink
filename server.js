@@ -39,7 +39,11 @@ const loginRoute = require('./routes/login')
 const teacherRoutes = require('./routes/teachersRoutes');
 const teachersLoginRoute = require('./routes/teachersLogin');
 const studentRoutes = require('./routes/students');
+const studentsLoginRoute = require('./routes/studentsLogin');
+const subjectRoute = require('./routes/subjects')
 
+app.use('/api/subjects', subjectRoute);
+app.use('/api/students-login', studentsLoginRoute);
 app.use('/api/teachers', teacherRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/login', loginRoute);

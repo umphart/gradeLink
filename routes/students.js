@@ -48,7 +48,9 @@ const upload = multer({
 router.post('/add-student', upload.single('photo'), async (req, res) => {
   let schoolDb;
   let centralDb;
-  
+  console.log('Received request to add student');
+  console.log('Body:', req.body);
+  console.log('File:', req.file);
   try {
     const { schoolName, section, student } = req.body;
     const normalizedSection = section.toLowerCase();
@@ -255,5 +257,338 @@ for (const section of sections) {
     });
   }
 });
+router.get('/api/student-count/all', async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        s.id AS school_id,
+        s.name AS school_name,
+        COUNT(sl.*) AS student_count
+      FROM schools s
+      LEFT JOIN students_login sl ON s.db_name = sl.school_db_name
+      GROUP BY s.id, s.name
+    `;
+    const { rows } = await pool.query(query);
+    res.json(rows);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
+// A
+router.get('/student/:admissionNumber', async (req, res) => {
+  let schoolDb;
+  try {
+    const admissionNumber = decodeURIComponent(req.params.admissionNumber);
+    
+    // First get the school info from central DB
+    const centralResult = await pool.query(
+      'SELECT * FROM students_login WHERE admission_number = $1',
+      [admissionNumber]
+    );
+    
+    if (centralResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+    
+    const { school_db_name, school_name, logo } = centralResult.rows[0];
+    schoolDb = await getSchoolDbConnection(school_db_name);
+    
+    // Check all sections for the student
+    const sections = ['primary', 'junior', 'senior'];
+    let student = null;
+    
+    for (const section of sections) {
+      const tableName = `${section}_students`;
+      try {
+        const result = await schoolDb.query(
+          `SELECT * FROM ${tableName} WHERE admission_number = $1`,
+          [admissionNumber]
+        );
+        
+        if (result.rows.length > 0) {
+          student = result.rows[0];
+          student.section = section;
+          break;
+        }
+      } catch (err) {
+        console.warn(`Table ${tableName} not found or error querying`, err.message);
+      }
+    }
+    
+    if (!student) {
+      return res.status(404).json({ message: 'Student record not found' });
+    }
+    
+    res.status(200).json({
+      success: true,
+      student: {
+        ...student,
+        schoolName: school_name,
+        logo
+      }
+    });
+    
+  } catch (err) {
+    console.error('Error fetching student:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  } finally {
+    if (schoolDb) await schoolDb.end();
+  }
+});
+
+router.get('/get-exam-records', async (req, res) => {
+  let schoolDb;
+
+  try {
+    const { schoolName, className, admissionNumber, sessionName, termName } = req.query;
+
+    const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+
+    // Enhanced class mapping
+    const classToTableMap = {
+      primary: 'primary_students',
+      jss: 'junior_students',    // Map JSS to junior
+      ss: 'senior_students',     // Map SS to senior
+      junior: 'junior_students',  // Alternative mapping
+      senior: 'senior_students'   // Alternative mapping
+    };
+
+    // Extract the section part from className (e.g., 'JSS 1' -> 'jss')
+    const sectionKey = className.toLowerCase().split(' ')[0];
+    
+    const studentTable = classToTableMap[sectionKey];
+    const normalizedClassName = className.toLowerCase().replace(/\s+/g, ''); // e.g., 'jss1'
+
+    const examTable = `${normalizedClassName}_exam`;
+
+    if (!studentTable) {
+      return res.status(400).json({ 
+        message: 'Invalid className provided',
+        details: `Expected class to start with Primary, JSS, or SS. Received: ${className}`
+      });
+    }
+
+    schoolDb = await getSchoolDbConnection(dbName);
+
+    // Get session and term IDs
+    const [sessionResult, termResult] = await Promise.all([
+      schoolDb.query(`SELECT id FROM sessions WHERE session_name = $1`, [sessionName]),
+      schoolDb.query(`SELECT id FROM terms WHERE term_name = $1`, [termName])
+    ]);
+
+    const sessionId = sessionResult.rows[0]?.id;
+    const termId = termResult.rows[0]?.id;
+
+    if (!sessionId || !termId) {
+      return res.status(404).json({ 
+        message: 'Session or term not found',
+        details: {
+          session: sessionName,
+          term: termName
+        }
+      });
+    }
+
+    // Check if exam table exists
+    const examTableExists = await schoolDb.query(
+      `SELECT EXISTS (
+         SELECT FROM information_schema.tables 
+         WHERE table_schema = 'public' AND table_name = $1
+       )`,
+      [examTable]
+    );
+
+    if (!examTableExists.rows[0].exists) {
+      return res.status(404).json({ 
+        message: 'Exam records not found',
+        details: `Exam table ${examTable} does not exist`
+      });
+    }
+
+    // Log all records when page loads (when no admissionNumber specified)
+    let query, params;
+
+    if (admissionNumber) {
+      query = `
+        SELECT 
+          e.*, 
+          s.full_name AS student_name, 
+          s.photo_url AS student_photo
+        FROM "${examTable}" e
+        JOIN "${studentTable}" s ON e.admission_number = s.admission_number
+        WHERE e.admission_number = $1 AND e.session_id = $2 AND e.term_id = $3
+        ORDER BY e.subject
+      `;
+      params = [admissionNumber, sessionId, termId];
+    } else {
+      query = `
+        SELECT 
+          e.*, 
+          s.full_name AS student_name, 
+          s.photo_url AS student_photo
+        FROM "${examTable}" e
+        JOIN "${studentTable}" s ON e.admission_number = s.admission_number
+        WHERE e.session_id = $1 AND e.term_id = $2
+        ORDER BY e.admission_number, e.subject
+      `;
+      params = [sessionId, termId];
+    }
+
+    const result = await schoolDb.query(query, params);
+    
+
+    
+
+    res.status(200).json({
+      success: true,
+      examRecords: result.rows,
+      metadata: {
+        studentTable,
+        examTable,
+        recordCount: result.rows.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in /get-exam-records:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to fetch exam records',
+      error: error.message,
+      stack: error.stack
+    });
+ 
+  } finally {
+    if (schoolDb) await schoolDb.end();
+  }
+});
+router.get('/all-exam-records', async (req, res) => {
+  let schoolDb;
+  try {
+    const { schoolName } = req.query;
+    
+    if (!schoolName) {
+      return res.status(400).json({ message: 'schoolName parameter is required' });
+    }
+
+    const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+    schoolDb = await getSchoolDbConnection(dbName);
+
+    // 1. Get all exam tables in the database
+    const tablesResult = await schoolDb.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_name LIKE '%\\_exam' ESCAPE '\\'
+    `);
+
+    if (tablesResult.rows.length === 0) {
+      return res.status(404).json({ message: 'No exam tables found' });
+    }
+
+    // 2. Query each exam table
+    const allRecords = [];
+    for (const table of tablesResult.rows) {
+      const tableName = table.table_name;
+      const records = await schoolDb.query(`SELECT * FROM "${tableName}"`);
+      allRecords.push({
+        className: tableName.replace('_exam', ''),
+        records: records.rows
+      });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      data: allRecords 
+    });
+
+  } catch (err) {
+    console.error('Error fetching exam records:', err);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (schoolDb) await schoolDb.end();
+  }
+});
+router.post('/add-exam-score', async (req, res) => {
+  let schoolDb;
+  try {
+    const { schoolName, className, examData, sessionName, termName } = req.body;
+
+    // Basic validation
+    if (
+      !schoolName || !className || !sessionName || !termName ||
+      !examData || !Array.isArray(examData)
+    ) {
+      return res.status(400).json({ message: 'Missing or invalid parameters' });
+    }
+
+    // Normalize school DB name
+    const dbName = `school_${schoolName.replace(/\s+/g, '_').toLowerCase()}`;
+    schoolDb = await getSchoolDbConnection(dbName);
+
+    const normalizedClassName = className.toLowerCase().replace(/\s+/g, '');
+    const examTable = `${normalizedClassName}_exam`;
+
+    // Ensure session exists and get ID
+    const sessionResult = await schoolDb.query(
+      `SELECT id FROM sessions WHERE session_name = $1`,
+      [sessionName]
+    );
+    let sessionId = sessionResult.rows[0]?.id;
+    if (!sessionId) {
+      const inserted = await schoolDb.query(
+        `INSERT INTO sessions (session_name) VALUES ($1) RETURNING id`,
+        [sessionName]
+      );
+      sessionId = inserted.rows[0].id;
+    }
+
+    // Ensure term exists and get ID
+    const termResult = await schoolDb.query(
+      `SELECT id FROM terms WHERE term_name = $1`,
+      [termName]
+    );
+    let termId = termResult.rows[0]?.id;
+    if (!termId) {
+      const inserted = await schoolDb.query(
+        `INSERT INTO terms (term_name) VALUES ($1) RETURNING id`,
+        [termName]
+      );
+      termId = inserted.rows[0].id;
+    }
+
+    // Insert each exam record
+    for (const record of examData) {
+      const { student_name, admission_number, subject, exam_mark, ca } = record;
+      const total = exam_mark + ca;
+      const grade = getGrade(total);   // Custom function for grade logic
+      const remark = getRemark(grade); // Custom function for remark logic
+
+      await schoolDb.query(
+        `INSERT INTO "${examTable}" 
+          (school_id, student_name, admission_number, class_name, subject, exam_mark, ca, total, remark, session_id, term_id)
+         VALUES 
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [1, student_name, admission_number, className, subject, exam_mark, ca, total, remark, sessionId, termId]
+      );
+    }
+
+    // Optional: Update averages and positions
+    await updateAveragesAndPositions(schoolDb, examTable);
+
+    res.status(201).json({ success: true, message: 'Exam data saved and computed successfully' });
+
+  } catch (err) {
+    console.error('Error adding exam score:', err);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (schoolDb) await schoolDb.end();
+  }
+});
 module.exports = router;
