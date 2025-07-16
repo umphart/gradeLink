@@ -4,13 +4,14 @@ const fs = require('fs');
 
 // Enhanced PostgreSQL pool config
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://school_management_db_xo40_user:nN35caUc34krtF9cO0rYomNscsDGktps@dpg-d1s0es95pdvs739p23v0-a.oregon-postgres.render.com/school_management_db_xo40',
+  connectionString: process.env.DATABASE_URL || 'postgres://school_admin:gF3BgZ6FIZJ6A0dIUyhjtRA9cZ4o7VBe@dpg-d1mfbe2dbo4c73f8apig-a.oregon-postgres.render.com:5432/school_management_aymr',
   ssl: {
-    rejectUnauthorized: false
+    rejectUnauthorized: false // This is less secure but works for development
   },
-  max: 10,
+    
+  max: 10, // Increased pool size
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 15000,
+  connectionTimeoutMillis: 15000, // Further increased timeout
   allowExitOnIdle: true
 });
 
