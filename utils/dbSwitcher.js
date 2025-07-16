@@ -3,12 +3,14 @@ const { Pool } = require('pg');
 
 module.exports = (dbName) => {
   return new Pool({
-    user: 'school_admin',
-    host: 'dpg-d1mfbe2dbo4c73f8apig-a.oregon-postgres.render.com',
-    database: dbName,
-    password: 'gF3BgZ6FIZJ6A0dIUyhjtRA9cZ4o7VBe',
+    user: 'school_management_db_xo40_user',
+    host: 'dpg-d1s0es95pdvs739p23v0-a.oregon-postgres.render.com',
+    database: dbName || 'school_management_db_xo40',
+    password: 'nN35caUc34krtF9cO0rYomNscsDGktps',
     port: 5432,
-    ssl: { rejectUnauthorized: false },
+    ssl: { 
+      rejectUnauthorized: false 
+    },
     max: 5,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000
