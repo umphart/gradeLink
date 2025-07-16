@@ -35,6 +35,7 @@ const upload = multer({
 router.post('/register', upload.single('school_logo'), async (req, res) => {
   let client;
   let schoolDb;
+  
   try {
     // Validate required fields
     const requiredFields = [
@@ -150,12 +151,15 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
       ]
     );
     await client.query('COMMIT');
-
+   const logoUrl = req.file ? 
+      `https://gradelink.onrender.com/uploads/logos/${req.file.filename}` : 
+      null;
     res.status(201).json({ 
       success: true,
       message: 'School registered successfully',
       schoolId,
-      dbName
+      dbName,
+      logoUrl // Add this to your response
     });
 
   } catch (err) {

@@ -4,56 +4,88 @@ const path = require('path');
 const fs = require('fs');
 const app = express();
 
-// Configure directories
+// ======================
+// 1. Directory Configuration
+// ======================
 const baseDir = process.env.NODE_ENV === 'production' 
-  ? '/opt/render/project/src'  // Render.com production path
-  : __dirname;                 // Local development path
+  ? '/opt/render/project/src'  // Render.com
+  : __dirname;                 // Local
 
 const uploadDir = path.join(baseDir, 'uploads');
-const teacherPhotoDir = path.join(baseDir, 'uploads', 'teachers');
+const teacherPhotoDir = path.join(uploadDir, 'teachers');
 
-// Create directories with error handling
+// Create directories with validation
 [uploadDir, teacherPhotoDir].forEach(dir => {
   try {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
-      console.log(`✅ Created directory: ${dir}`);
+      console.log(`📁 Directory created: ${dir}`);
     }
   } catch (err) {
-    console.error(`❌ Failed to create directory ${dir}:`, err);
-    process.exit(1); // Exit if we can't create essential directories
+    console.error(`❌ Critical directory error:`, err);
+    process.exit(1);
   }
 });
 
-// Enhanced CORS Configuration
+// ======================
+// 2. CORS Configuration
+// ======================
 const corsOptions = {
   origin: [
     'https://grade-linkfrontend.vercel.app',
     'http://localhost:3000',
-    'https://gradelink.onrender.com' // Add your Render URL
+    'https://gradelink.onrender.com'
   ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true,
-  optionsSuccessStatus: 200
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
 };
-app.use(cors(corsOptions));
 
-// Improved body parsing middleware
+// ======================
+// 3. Middleware Setup
+// ======================
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files with cache control
-app.use('/uploads', express.static(uploadDir, {
-  maxAge: '1d', // Cache for 1 day
-  setHeaders: (res, path) => {
-    if (path.endsWith('.png') || path.endsWith('.jpg') || path.endsWith('.jpeg')) {
-      res.setHeader('Content-Type', 'image/' + path.split('.').pop());
+// ======================
+// 4. Static File Serving
+// ======================
+app.use('/uploads/teachers', express.static(teacherPhotoDir, {
+  maxAge: '1d',
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.png', '.jpg', '.jpeg'].includes(ext)) {
+      res.set('Content-Type', `image/${ext.slice(1)}`);
     }
   }
 }));
 
-// Enhanced logging middleware
+app.get('/api/teachers/images', (req, res) => {
+  fs.readdir(teacherPhotoDir, (err, files) => {
+    if (err) {
+      console.error('Directory read error:', err);
+      return res.status(500).json({ error: 'Failed to read images' });
+    }
+
+    const images = files
+      .filter(file => /\.(png|jpg|jpeg)$/i.test(file))
+      .map(file => ({
+        name: file,
+        url: `https://${req.get('host')}/uploads/teachers/${file}`,
+        path: path.join(teacherPhotoDir, file)
+      }));
+
+    res.json({ 
+      success: true,
+      count: images.length,
+      images 
+    });
+  });
+});
+
+// ======================
+// 5. Enhanced Logging Middleware
+// ======================
 app.use((req, res, next) => {
   const start = Date.now();
   const timestamp = new Date().toISOString();
@@ -71,7 +103,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Routes
+// ======================
+// 6. Routes
+// ======================
 const schoolRoutes = require('./routes/schools')
 const loginRoute = require('./routes/login')
 const teacherRoutes = require('./routes/teachersRoutes');
@@ -88,12 +122,16 @@ app.use('/api/login', loginRoute);
 app.use('/api/teachers-login', teachersLoginRoute);
 app.use('/api/students', studentRoutes);
 
-// Health check
+// ======================
+// 7. Health Check
+// ======================
 app.get('/', (req, res) => {
   res.send('GradeLink API is running............ ✅');
 });
 
-// Error handling middleware
+// ======================
+// 8. Error Handling
+// ======================
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ 
@@ -102,37 +140,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Add this to your Express routes
-app.get('/', (req, res) => {
-  const teacherPhotoDir = path.join(__dirname, '../uploads/teachers');
-
-  fs.readdir(teacherPhotoDir, (err, files) => {
-    if (err) {
-      console.error('Error reading directory:', err);
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to read images directory',
-        details: err.message
-      });
-    }
-
-    // Filter only image files
-    const imageFiles = files.filter(file => 
-      ['.png', '.jpg', '.jpeg', '.gif'].includes(path.extname(file).toLowerCase())
-    );
-
-    res.json({
-      success: true,
-      count: imageFiles.length,
-      images: imageFiles.map(file => ({
-        name: file,
-        url: `https://gradelink.onrender.com/uploads/teachers/${file}`
-      }))
-    });
-  });
-});
-
-// Start server
+// ======================
+// 9. Server Startup
+// ======================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
