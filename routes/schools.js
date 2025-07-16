@@ -18,12 +18,10 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
-filename: (req, file, cb) => {
-  const ext = path.extname(file.originalname);
-  const baseName = path.basename(file.originalname, ext);
-  const uniqueName = `${baseName}-${Date.now()}${ext}`;
-  cb(null, uniqueName);
-}
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + '-' + file.originalname;
+    cb(null, uniqueName);
+  },
 });
 
 const upload = multer({ 
@@ -35,7 +33,6 @@ const upload = multer({
 router.post('/register', upload.single('school_logo'), async (req, res) => {
   let client;
   let schoolDb;
-  
   try {
     // Validate required fields
     const requiredFields = [
@@ -151,15 +148,12 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
       ]
     );
     await client.query('COMMIT');
-   const logoUrl = req.file ? 
-      `https://gradelink.onrender.com/uploads/logos/${req.file.filename}` : 
-      null;
+
     res.status(201).json({ 
       success: true,
       message: 'School registered successfully',
       schoolId,
-      dbName,
-      logoUrl // Add this to your response
+      dbName
     });
 
   } catch (err) {
@@ -271,7 +265,7 @@ async function createSchoolTables(db, dbName) {
         id SERIAL PRIMARY KEY,
         school_id INTEGER,
         teacher_id VARCHAR(100) UNIQUE NOT NULL,
-        full_name VARCHAR(255) NOT NULL,
+        teacher_name VARCHAR(255) NOT NULL,
         email VARCHAR(255),
         phone VARCHAR(20),
         teacherID VARCHAR(50),
