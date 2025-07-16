@@ -1,19 +1,12 @@
 const { Pool } = require('pg');
-require('dotenv').config(); // Load environment variables
 
 function getSchoolDbPool(schoolDbName) {
-  // Validate database name to prevent SQL injection
-  if (!/^[a-zA-Z0-9_]+$/.test(schoolDbName)) {
-    throw new Error('Invalid database name format');
-  }
-
   return new Pool({
-    connectionString: process.env.DATABASE_URL || 
-      `postgres://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${schoolDbName}`,
+    connectionString: `postgresql://school_admin:gF3BgZ6FIZJ6A0dIUyhjtRA9cZ4o7VBe@dpg-d1mfbe2dbo4c73f8apig-a.oregon-postgres.render.com:5432/${schoolDbName}`,
     ssl: {
-      rejectUnauthorized: process.env.NODE_ENV === 'production' // Only true in production
+      rejectUnauthorized: false,
     },
-    max: 5, // Conservative pool size for free tier
+    max: 5,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000
   });
