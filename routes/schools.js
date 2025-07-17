@@ -38,28 +38,39 @@ const upload = multer({
 });
 
 // School Registration Endpoint
+// School Registration Endpoint
 router.post('/register', upload.single('school_logo'), async (req, res) => {
   let client;
   let schoolDb;
+  
+  // Start registration logging
+  console.log('\n=== NEW SCHOOL REGISTRATION STARTED ===');
+  console.log('Timestamp:', new Date().toISOString());
+  console.log('Request Body:', JSON.stringify(req.body, null, 2));
+  
+  if (req.file) {
+    console.log('School Logo Uploaded:', {
+      originalName: req.file.originalname,
+      storedPath: req.file.path,
+      size: `${(req.file.size / 1024).toFixed(2)} KB`,
+      mimeType: req.file.mimetype
+    });
+  } else {
+    console.log('No school logo uploaded');
+  }
+
   try {
     // Validate required fields
     const requiredFields = [
-      'school_name',
-      'school_email',
-      'school_phone',
-      'school_address', 
-      'school_city',
-      'school_state',
-      'admin_firstName',
-      'admin_lastName',
-      'admin_email',
-      'admin_phone',
-      'admin_password'
+      'school_name', 'school_email', 'school_phone', 'school_address', 
+      'school_city', 'school_state', 'admin_firstName', 'admin_lastName',
+      'admin_email', 'admin_phone', 'admin_password'
     ];
 
     const missingFields = requiredFields.filter(field => !req.body[field]);
     
     if (missingFields.length > 0) {
+      console.error('Missing required fields:', missingFields.join(', '));
       if (req.file) fs.unlink(req.file.path, () => {});
       return res.status(400).json({ 
         success: false,
@@ -67,6 +78,24 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
         missingFields: missingFields.join(', ')
       });
     }
+
+    // Log school data
+    console.log('\n=== SCHOOL INFORMATION ===');
+    console.log('School Name:', req.body.school_name);
+    console.log('Email:', req.body.school_email);
+    console.log('Phone:', req.body.school_phone);
+    console.log('Address:', req.body.school_address);
+    console.log('City:', req.body.school_city);
+    console.log('State:', req.body.school_state);
+    console.log('Logo Filename:', req.file?.filename || 'None');
+
+    // Log admin data
+    console.log('\n=== ADMIN INFORMATION ===');
+    console.log('First Name:', req.body.admin_firstName);
+    console.log('Last Name:', req.body.admin_lastName);
+    console.log('Email:', req.body.admin_email);
+    console.log('Phone:', req.body.admin_phone);
+    console.log('Password:', '********'); // Don't log actual password
 
     client = await pool.connect();
     await client.query('BEGIN');
@@ -78,6 +107,9 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
       RETURNING id;
     `;
 
+    console.log('\n=== DATABASE OPERATIONS ===');
+    console.log('Inserting school into central database...');
+    
     const schoolResult = await client.query(schoolInsert, [
       req.body.school_name,
       req.body.school_email,
@@ -89,15 +121,17 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
     ]);
 
     const schoolId = schoolResult.rows[0].id;
+    console.log('✅ School created with ID:', schoolId);
 
     // Step 2: Create dedicated database for school
     const dbName = `school_${req.body.school_name.replace(/\s+/g, '_').toLowerCase()}`;
+    console.log('\nCreating dedicated database:', dbName);
     
     try {
       await client.query('COMMIT');
-      console.log(`🛠 Creating database: ${dbName}`);
+      console.log('🛠 Creating database:', dbName);
       await pool.query(`CREATE DATABASE ${dbName}`);
-      console.log(`✅ Database created: ${dbName}`);
+      console.log('✅ Database created:', dbName);
 
       // Verify database was created
       const dbCheck = await pool.query(
@@ -114,13 +148,13 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
 
     // Step 3: Initialize school database tables
     try {
-      console.log(`🛠 Initializing tables in ${dbName}`);
+      console.log(`\n🛠 Initializing tables in ${dbName}`);
       schoolDb = getSchoolDbConnection(dbName);
       
       // Test connection to new database
       const testClient = await schoolDb.connect();
       const testRes = await testClient.query('SELECT NOW()');
-      console.log('✅ School DB connection test:', testRes.rows[0]);
+      console.log('✅ School DB connection test successful');
       testClient.release();
 
       await createSchoolTables(schoolDb, dbName);
@@ -132,7 +166,7 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
         FROM information_schema.tables 
         WHERE table_schema = 'public'
       `);
-      console.log('Tables created:', tables.rows.map(t => t.table_name));
+      console.log('✅ Tables created:', tables.rows.map(t => t.table_name));
       verifyClient.release();
     } catch (err) {
       console.error(`❌ Failed to initialize school database ${dbName}:`, err);
@@ -140,6 +174,7 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
     }
 
     // Step 4: Create admin account
+    console.log('\nCreating admin account...');
     client = await pool.connect();
     await client.query('BEGIN');
     const hashedPassword = await bcrypt.hash(req.body.admin_password, 10);
@@ -156,6 +191,12 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
       ]
     );
     await client.query('COMMIT');
+    console.log('✅ Admin account created successfully');
+
+    console.log('\n=== REGISTRATION COMPLETE ===');
+    console.log('School ID:', schoolId);
+    console.log('Database Name:', dbName);
+    console.log('Admin Email:', req.body.admin_email);
 
     res.status(201).json({ 
       success: true,
@@ -165,15 +206,22 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Registration error:', err);
+    console.error('\n=== REGISTRATION ERROR ===');
+    console.error('Error:', err.message);
+    console.error('Stack:', err.stack);
+    
     if (client) {
       try {
         await client.query('ROLLBACK');
+        console.log('Transaction rolled back');
       } catch (rollbackErr) {
         console.error('Rollback error:', rollbackErr);
       }
     }
-    if (req.file) fs.unlink(req.file.path, () => {});
+    if (req.file) {
+      fs.unlink(req.file.path, () => {});
+      console.log('Uploaded logo deleted due to error');
+    }
     
     res.status(500).json({ 
       success: false,
@@ -181,11 +229,17 @@ router.post('/register', upload.single('school_logo'), async (req, res) => {
       ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
     });
   } finally {
-    if (client) client.release();
-    if (schoolDb) await schoolDb.end();
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
+    if (schoolDb) {
+      await schoolDb.end();
+      console.log('School database connection ended');
+    }
+    console.log('=== PROCESS COMPLETED ===\n');
   }
 });
-
 // Helper function to create all school tables (updated to match no 2)
 async function createSchoolTables(db, dbName) {
   let client;
