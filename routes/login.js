@@ -1,7 +1,9 @@
 // routes/login.js
 const express = require('express');
 const pool = require('../models/db');
-const bcrypt = require('bcryptjs'); // Add bcrypt for password comparison
+const bcrypt = require('bcryptjs');
+const path = require('path'); // Add path module for directory operations
+const fs = require('fs'); // Add fs module for file system operations
 const router = express.Router();
 
 router.post('/', async (req, res) => {
@@ -44,13 +46,34 @@ router.post('/', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    // Log the logo information
-    console.log('Login successful for:', email);
+    // Enhanced logo logging
+    console.log('\n--- Login successful for:', email, '---');
     if (user.logo) {
       console.log('Logo path:', user.logo);
-      // Extract logo name if the path contains a filename
+      
+      // Extract logo name
       const logoName = user.logo.split('/').pop();
       console.log('Logo name:', logoName);
+      
+      // Get directory information
+      const logoDir = path.dirname(user.logo);
+      console.log('Logo directory:', logoDir);
+      
+      try {
+        // Check if logo file exists
+        const fullPath = path.join(process.cwd(), 'public', user.logo); // Adjust path as needed
+        const fileExists = fs.existsSync(fullPath);
+        
+        console.log('Logo file exists:', fileExists);
+        if (fileExists) {
+          console.log('Logo file stats:', fs.statSync(fullPath));
+        }
+        
+        // List directory contents (be careful with this in production)
+        console.log('Directory contents:', fs.readdirSync(path.dirname(fullPath)));
+      } catch (dirErr) {
+        console.error('Error accessing logo directory:', dirErr.message);
+      }
     } else {
       console.log('No logo associated with this school');
     }
