@@ -44,6 +44,17 @@ router.post('/', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    // Log the logo information
+    console.log('Login successful for:', email);
+    if (user.logo) {
+      console.log('Logo path:', user.logo);
+      // Extract logo name if the path contains a filename
+      const logoName = user.logo.split('/').pop();
+      console.log('Logo name:', logoName);
+    } else {
+      console.log('No logo associated with this school');
+    }
+
     client.release();
 
     res.status(200).json({
