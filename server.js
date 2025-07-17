@@ -3,12 +3,26 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const app = express();
-app.use(express.json());
-// Ensure upload directory exists
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+
+// Enhanced upload directory configuration
+const configureUploadDirectory = () => {
+  // Use Render's persistent storage if available, otherwise local uploads
+  const baseDir = process.env.RENDER 
+    ? '/var/data/uploads'  // Render persistent storage
+    : path.join(__dirname, 'uploads');
+
+  const logoDir = path.join(baseDir, 'logos');
+  
+  // Create directory structure if it doesn't exist
+  if (!fs.existsSync(logoDir)) {
+    fs.mkdirSync(logoDir, { recursive: true });
+    console.log(`Created upload directory: ${logoDir}`);
+  }
+  
+  return logoDir;
+};
+
+const uploadDir = configureUploadDirectory();
 
 // CORS Configuration
 app.use(cors({
@@ -17,20 +31,52 @@ app.use(cors({
     'http://localhost:3000'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 // Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static files
+// Static files - serve from the correct upload directory
 app.use('/uploads', express.static(uploadDir));
 
-// Logging middleware
+// Enhanced logging middleware with file upload awareness
 app.use((req, res, next) => {
   console.log(`🔍 ${req.method} ${req.url}`);
+  if (req.file) {
+    console.log(`📁 File upload detected: ${req.file.originalname}`);
+  }
   next();
+});
+
+// File existence verification endpoint
+app.get('/verify-upload/:filename', (req, res) => {
+  const filePath = path.join(uploadDir, req.params.filename);
+  
+  fs.access(filePath, fs.constants.F_OK, (err) => {
+    if (err) {
+      console.error(`File not found: ${filePath}`);
+      return res.status(404).json({ 
+        exists: false,
+        path: filePath,
+        message: 'File not found'
+      });
+    }
+    res.json({ 
+      exists: true,
+      path: filePath,
+      url: `/uploads/${req.params.filename}`
+    });
+  });
+});
+
+// Error handling for file operations
+process.on('unhandledRejection', (err) => {
+  if (err.code === 'ENOENT') {
+    console.error('File system error:', err.message);
+  }
 });
 
 // Routes
